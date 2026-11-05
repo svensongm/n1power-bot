@@ -1,29 +1,81 @@
 {
  "2026-11-06": {
-  "cbc": {
-   "final": true,
-   "final_at": "14:56",
-   "first_at": "14:56",
-   "msgs": [
-    [
-     11,
-     12
-    ]
-   ],
-   "posted": true,
-   "sig": "AL>GR,AL>ME,AT>CH,BA>HR,BA>ME,BA>RS,GR>AL,GR>MK,GR>TR,HR>BA,IT>CH,IT>ME,ME>AL,ME>BA,ME>IT,ME>RS,ME>XK,MK>GR,MK>RS,MK>XK,RO>RS,RS>BA,RS>BG,RS>HR,RS>HU,RS>ME,RS>MK,RS>RO,TR>GR,XK>ME,XK>MK"
-  },
-  "da": {
-   "first_at": "14:59",
-   "msgs": [
-    [
-     14,
-     15,
-     16
-    ]
-   ],
-   "posted": true,
-   "sig": "AL,AT,BE,BG,CH,CZ,DE_LU,ES,FR,GR,HR,HU,IT,IT_CSUD,IT_NORD,IT_SUD,ME,MK,NL,PL,RO,RS,SI,SK"
-  }
+  "cbc": [
+   "AL-GR",
+   "AL-ME",
+   "AT-CH",
+   "BA-HR",
+   "BA-ME",
+   "BA-RS",
+   "GR-AL",
+   "GR-MK",
+   "GR-TR",
+   "HR-BA",
+   "IT-CH",
+   "IT-ME",
+   "ME-AL",
+   "ME-BA",
+   "ME-IT",
+   "ME-RS",
+   "ME-XK",
+   "MK-GR",
+   "MK-RS",
+   "MK-XK",
+   "RO-RS",
+   "RS-BA",
+   "RS-BG",
+   "RS-HR",
+   "RS-HU",
+   "RS-ME",
+   "RS-MK",
+   "RS-RO",
+   "TR-GR",
+   "XK-ME",
+   "XK-MK"
+  ],
+  "da": [
+   "AL",
+   "AT",
+   "BE",
+   "BG",
+   "CH",
+   "CZ",
+   "DE",
+   "ES",
+   "FR",
+   "GR",
+   "HR",
+   "HU",
+   "IT",
+   "IT-CSUD",
+   "IT-NORD",
+   "IT-SUD",
+   "ME",
+   "MK",
+   "NL",
+   "PL",
+   "RO",
+   "RS",
+   "SI",
+   "SK"
+  ],
+  "final": false,
+  "ids": [
+   [
+    22,
+    23,
+    24,
+    25,
+    26
+   ]
+  ],
+  "names": [
+   "cbc_see",
+   "cbc_ch",
+   "prices_table",
+   "prices_calendar_1",
+   "prices_calendar_2"
+  ],
+  "posted": "15:56"
  }
 }
