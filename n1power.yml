@@ -1,0 +1,55 @@
+name: N1 POWER bot
+
+on:
+  schedule:
+    # every 20 minutes 06:07-15:47 UTC; the bot itself works 09:15-16:00 CET/CEST
+    - cron: "7,27,47 6-15 * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        options:
+          - send report now
+          - show my Telegram chat id
+        default: send report now
+      delivery_date:
+        description: "Delivery day YYYY-MM-DD (empty = tomorrow)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.event_name == 'schedule' && 'watcher' || format('manual-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run the bot
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+          VOLUE_CLIENT_ID: ${{ secrets.VOLUE_CLIENT_ID }}
+          VOLUE_CLIENT_SECRET: ${{ secrets.VOLUE_CLIENT_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ACTION: ${{ github.event_name == 'schedule' && 'watch' || inputs.action }}
+          DELIVERY_DATE: ${{ inputs.delivery_date }}
+        run: |
+          git config user.name "n1power-bot"
+          git config user.email "n1power-bot@users.noreply.github.com"
+          case "$ACTION" in
+            watch) python da_cbc_report.py --watch --run-minutes 39 ;;
+            "show my Telegram chat id") python da_cbc_report.py --find-chat-id ;;
+            *) python da_cbc_report.py --now ;;
+          esac

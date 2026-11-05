@@ -1,0 +1,39 @@
+# N1 POWER bot - settings. Edit on GitHub with the pencil icon. Times are CET/CEST.
+# Area codes: AL AT BA BE BG CH CZ DE ES FR GR HR HU IT (=PUN) IT_NORD IT_CNOR IT_CSUD IT_SUD
+#             IT_CALA IT_SICI IT_SARD MD ME MK NL PL PT RO RS SI SK TR UA XK
+
+[schedule]
+cbc_start = "09:15"              # start checking tomorrow's daily capacity auctions
+cbc_final = "12:30"              # stop waiting; borders still missing are shown as n/a
+prices_start = "12:55"           # start checking tomorrow's day-ahead prices
+prices_first_post_when = "HU"    # first price post as soon as this market is published
+prices_final = "16:00"           # stop waiting; markets still missing are shown as n/a
+check_every_seconds = 60
+
+[prices]
+# Hourly price table, in this order
+markets = ["IT", "IT_CSUD", "IT_NORD", "IT_SUD", "HU", "SI", "HR", "RS", "RO", "BG", "GR",
+           "CZ", "SK", "PL", "ME", "MK", "AL", "AT", "DE", "BE", "NL", "CH", "FR", "ES", "UA"]
+peak = "08:00-20:00"             # = hours 9-20
+sources = ["volue", "entsoe"]    # Volue first, ENTSO-E for what Volue does not have
+# volue_curves = { UA = "pri ua spot €/mwh cet h a" }   # only if a Volue curve has another name
+
+[calendar]
+# One calendar per country with the full daily base price, running month average and Mon-Sun week average
+countries = ["HU", "HR", "SI", "RS", "RO", "BG", "GR", "ME", "MK", "IT", "DE", "AT", "FR", "ES"]
+split_after = "MK"                     # calendar picture 1 = HU ... MK, picture 2 = IT ... ES + spread recap
+spread_base = "HU"
+# Spread to HU: shown small in each country's week column and in the week recap table
+spreads = ["HR", "SI", "RS", "RO", "BG", "GR", "ME", "MK", "IT", "DE", "AT"]
+country_first = ["DE", "GR", "AT"]     # DEHU = DE - HU ... ; all others HUxx = HU - xx
+
+[cbc]
+# Daily explicit capacity auctions, direction FROM>TO
+see = ["HU>RS", "RS>HU", "RO>RS", "RS>RO", "BG>RS", "RS>BG", "HR>RS", "RS>HR", "MK>RS", "RS>MK",
+       "ME>RS", "RS>ME", "BA>RS", "RS>BA", "HR>BA", "BA>HR", "BA>ME", "ME>BA", "ME>AL", "AL>ME",
+       "ME>XK", "XK>ME", "MK>XK", "XK>MK", "AL>GR", "GR>AL", "GR>MK", "MK>GR", "BG>MK", "MK>BG",
+       "GR>TR", "TR>GR", "ME>IT", "IT>ME"]
+ch = ["DE>CH", "CH>DE", "FR>CH", "CH>FR", "IT>CH", "CH>IT", "AT>CH", "CH>AT"]
+
+[telegram]
+excel_when_final = true          # send the Excel file once everything is known
