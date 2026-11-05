@@ -160,7 +160,7 @@ def label(code: str) -> str:
 
 
 def blabel(b) -> str:
-    return f"{label(b[0])}>{label(b[1])}"
+    return f"{label(b[0])}-{label(b[1])}"            # HU-RS = from HU to RS
 
 
 def parallel(fn, items, workers: int = 4) -> list:
@@ -289,24 +289,38 @@ class Entsoe:
                 pause(10 * (attempt + 1))
                 continue
             body = r.content
-            if body[:2] == b"PK":
+            if body[:2] == b"PK":                       # several documents come zipped: read them all
                 with zipfile.ZipFile(io.BytesIO(body)) as z:
-                    body = z.read(z.namelist()[0])
-            try:
-                root = ET.fromstring(body)
-            except ET.ParseError:
+                    docs = [z.read(n) for n in z.namelist() if not n.endswith("/")]
+            else:
+                docs = [body]
+            series, reasons, readable = [], [], 0
+            for doc in docs:
+                try:
+                    root = ET.fromstring(doc)
+                except ET.ParseError:
+                    continue
+                readable += 1
+                if _tag(root) == "Acknowledgement_MarketDocument":
+                    reasons.append(" ".join(e.text.strip() for e in root.iter() if _tag(e) == "text" and e.text))
+                else:
+                    series += parse_timeseries(root)
+            if not readable:
                 problem = f"unreadable answer (HTTP {r.status_code})"
                 pause(4)
                 continue
-            if _tag(root) == "Acknowledgement_MarketDocument":
-                reason = " ".join(e.text.strip() for e in root.iter() if _tag(e) == "text" and e.text)
-                if "no matching data" in reason.lower():
-                    return None
-                raise SourceError(f"ENTSO-E: {reason[:160] or 'request not accepted'}")
-            if r.status_code != 200:
-                raise SourceError(f"ENTSO-E HTTP {r.status_code}")
-            return parse_timeseries(root)
+            if series:
+                return series
+            reason = " ".join(reasons)
+            if "no matching data" in reason.lower() or (not reasons and r.status_code == 200):
+                return None
+            raise SourceError(f"ENTSO-E: {reason[:160] or f'HTTP {r.status_code}'}")
         raise SourceError(f"ENTSO-E not reachable: {problem}")
+
+    @staticmethod
+    def _day_window(d_from: date, d_to: date) -> dict:
+        f = "%Y%m%d%H%M"
+        return {"periodStart": day_start(d_from).strftime(f), "periodEnd": day_start(d_to).strftime(f)}
 
     @staticmethod
     def _window(d_from: date, d_to: date) -> dict:
@@ -339,20 +353,23 @@ class Entsoe:
             d += DAY
         return out
 
-    def capacity_range(self, border, d_from: date, d_to: date) -> dict:
-        """Daily explicit auctions for one direction: {day: (hourly EUR prices, hourly MW, currency)}."""
+    def capacity_range_noted(self, border, d_from: date, d_to: date):
+        """Daily explicit auctions for one direction: ({day: (hourly EUR prices, hourly MW, currency)}, note)."""
         params = {"documentType": "A25", "businessType": "B05", "out_Domain": AREAS[border[0]][0],
-                  "in_Domain": AREAS[border[1]][0], **self._window(d_from, d_to)}
+                  "in_Domain": AREAS[border[1]][0], **self._day_window(d_from, d_to)}
         try:
             pieces = self.query({**params, "contract_MarketAgreement.Type": "A01"})
         except SourceError:
             pieces = self.query({**params, "contract_MarketAgreement.type": "A01"})
-        priced = [s for s in pieces or []
+        if not pieces:
+            return {}, "not on ENTSO-E yet"
+        priced = [s for s in pieces
                   if s["meta"].get("contract_MarketAgreement.type", "A01") in ("A01", "")
                   and any(b[2] is not None for b in s["points"])]
         use = [s for s in priced if s["meta"].get("businessType") == "B05"] or priced
         if not use:
-            return {}
+            kinds = ", ".join(sorted({s["meta"].get("businessType", "?") for s in pieces}))
+            return {}, f"ENTSO-E has it without prices ({kinds})"
         use.sort(key=lambda s: (_res_minutes(s["res"]), _seq(s)))
         cur = use[0]["meta"].get("currency_Unit.name") or "EUR"
         blocks = [b for s in use for b in s["points"]]
@@ -364,7 +381,10 @@ class Entsoe:
                     price = [None if v is None else v / BAM_PER_EUR for v in price]
                 out[d] = (price, mw, cur)
             d += DAY
-        return out
+        return out, ("" if out else "ENTSO-E has it only for other days")
+
+    def capacity_range(self, border, d_from: date, d_to: date) -> dict:
+        return self.capacity_range_noted(border, d_from, d_to)[0]
 
     def capacity(self, border, d: date):
         return self.capacity_range(border, d, d + DAY).get(d)
@@ -403,31 +423,73 @@ class Volue:
                 self._ids[name] = (j[0] if isinstance(j, list) and j else j or {}).get("id")
         return self._ids[name]
 
+    @staticmethod
+    def _currency(name: str):
+        n = name.lower()
+        return "UAH" if "uah" in n else ("EUR" if ("€" in n or "eur" in n) else None)
+
+    def _find(self, area: str):
+        """A day-ahead price curve whose name is not the usual one (e.g. UA): search Volue by area."""
+        key = ("search", area)
+        if key not in self._ids:
+            best = None
+            for term in dict.fromkeys([label(area)] + [v.upper() for v in AREAS[area][2]]):
+                try:
+                    r = self.http.get(f"{VOLUE_API_URL}/api/curves", params={"area": term, "category": "PRI",
+                                                                             "data_type": "A"},
+                                      headers=self._headers(), timeout=30)
+                    found = r.json() if r.status_code == 200 else []
+                except (requests.RequestException, ValueError):
+                    continue
+                for c in found if isinstance(found, list) else []:
+                    name = str(c.get("name") or "")
+                    words = name.lower().split()
+                    if "spot" not in words or any(w in ("imb", "id", "intraday", "vwap", "exaa") for w in words):
+                        continue
+                    cur = self._currency(name)
+                    if cur is None or c.get("id") is None:
+                        continue
+                    rank = (cur != "EUR", str(c.get("frequency", "")).upper() not in ("H", "MIN15"), len(name))
+                    if best is None or rank < best[0]:
+                        best = (rank, (c["id"], cur, name))
+                if best:
+                    break
+            self._ids[key] = best[1] if best else None
+            if best:
+                log.info("Volue: %s prices from curve '%s'", label(area), best[1][2])
+        return self._ids[key]
+
     def day_ahead(self, area: str, d_from: date, d_to: date) -> dict:
         names = [self.curves[area]] if area in self.curves else [f"pri {v} spot €/mwh cet h a" for v in AREAS[area][2]]
+        target = None
         for name in names:
             cid = self._curve_id(name)
-            if cid is None:
-                continue
-            r = self.http.get(f"{VOLUE_API_URL}/api/series/{cid}",
-                              params={"from": d_from.isoformat(), "to": d_to.isoformat()},
-                              headers=self._headers(), timeout=60)
-            r.raise_for_status()
-            j = r.json() or {}
-            step = {"MIN15": QH, "H": HOUR}.get(str(j.get("frequency", "H")).upper(), HOUR)
-            blocks = []
-            for ms, v in j.get("points") or []:
-                if v is not None:
-                    t = datetime.fromtimestamp(ms / 1000, UTC)
-                    blocks.append((t, t + step, float(v), None))
-            out, d = {}, d_from
-            while d < d_to:
-                hourly, _ = _hourly(d, blocks)
-                if all(v is not None for v in hourly):
-                    out[d] = (hourly, "EUR")
-                d += DAY
-            return out
-        return {}
+            if cid is not None:
+                target = (cid, self._currency(name) or "EUR", name)
+                break
+        if target is None:
+            target = self._find(area)
+        if target is None:
+            return {}
+        cid, cur, _name = target
+        r = self.http.get(f"{VOLUE_API_URL}/api/series/{cid}",       # one day extra each side: curves in EET etc.
+                          params={"from": (d_from - DAY).isoformat(), "to": (d_to + DAY).isoformat()},
+                          headers=self._headers(), timeout=60)
+        r.raise_for_status()
+        j = r.json() or {}
+        step = {"MIN15": QH, "H": HOUR}.get(str(j.get("frequency", "H")).upper(), HOUR)
+        blocks = []
+        for ms, v in j.get("points") or []:
+            if v is not None:
+                t = datetime.fromtimestamp(ms / 1000, UTC)
+                blocks.append((t, t + step, float(v), None))
+        out, d = {}, d_from
+        while d < d_to:
+            hourly, _ = _hourly(d, blocks)
+            if all(v is not None for v in hourly):
+                out[d] = (hourly, cur)
+            d += DAY
+        return out
 
 
 # --------------------------------------------------------------------------- price store
@@ -439,15 +501,26 @@ class Prices:
         self.cache: dict = {}          # (market, day) -> (hourly, source)
         self._lock = threading.Lock()
         self._fx: dict = {}
+        self.converted: dict = {}      # (market, day) -> UAH per EUR used
+        self._fx_down = False
 
     def _uah(self, d: date):
+        """Official NBU EUR rate for the day (or the latest one before it)."""
         if d not in self._fx:
-            try:
-                r = self.ctx.http.get(NBU_URL, params={"valcode": "EUR", "date": d.strftime("%Y%m%d"), "json": ""},
-                                      timeout=20)
-                self._fx[d] = float(r.json()[0]["rate"])
-            except Exception:
-                self._fx[d] = None
+            rate = None
+            for back in range(5 if not self._fx_down else 0):
+                day = d - back * DAY
+                try:
+                    r = self.ctx.http.get(NBU_URL, params={"valcode": "EUR", "date": day.strftime("%Y%m%d"),
+                                                           "json": ""}, timeout=15)
+                    j = r.json()
+                except Exception:              # NBU not reachable: do not try again in this run
+                    self._fx_down = True
+                    break
+                if j:
+                    rate = float(j[0]["rate"])
+                    break
+            self._fx[d] = rate
         return self._fx[d]
 
     def get(self, m: str, d_from: date, d_to: date) -> dict:
@@ -472,6 +545,7 @@ class Prices:
                             if not rate:
                                 continue
                             hourly = [v / rate for v in hourly]
+                            self.converted[(m, d)] = rate
                         elif cur != "EUR":
                             continue
                         self.cache[(m, d)] = (hourly, "Volue" if src == "volue" else "ENTSO-E")
@@ -515,52 +589,78 @@ class Telegram:
             return j
         raise ReportError(f"Telegram not reachable: {problem}")
 
-    def send_photos(self, photos) -> list[list[int]]:
+    def send_album(self, photos, caption: str) -> list[list[int]]:
+        """All pictures as ONE album (one message to forward); the caption shows under it."""
         ids = []
         for chat in self.chats:
-            row = []
-            for name, png, caption in photos:
+            if len(photos) == 1:
+                name, png = photos[0]
                 j = self.call("sendPhoto", data={"chat_id": chat, "caption": caption, "parse_mode": "HTML"},
                               files={"photo": (f"{name}.png", png, "image/png")})
-                row.append(j["result"]["message_id"])
-            ids.append(row)
+                ids.append([j["result"]["message_id"]])
+                continue
+            media, files = [], {}
+            for k, (name, png) in enumerate(photos):
+                item = {"type": "photo", "media": f"attach://p{k}"}
+                if k == 0:
+                    item.update(caption=caption, parse_mode="HTML")
+                media.append(item)
+                files[f"p{k}"] = (f"{name}.png", png, "image/png")
+            j = self.call("sendMediaGroup", data={"chat_id": chat, "media": json.dumps(media)}, files=files)
+            ids.append([m["message_id"] for m in j["result"]])
         return ids
 
-    def edit_photos(self, ids: list[list[int]], photos) -> list[list[int]]:
-        out = []
+    @staticmethod
+    def _edit(fn) -> None:
+        try:
+            fn()
+        except TelegramRefused as e:
+            text = str(e).lower()
+            if "not modified" in text:
+                return
+            if "not found" in text or "can't be edited" in text:
+                raise AlbumGone(str(e))
+            raise
+
+    def edit_album(self, ids, edits: dict, caption: str) -> None:
+        """Replace the changed pictures (by position) and the caption of an album."""
         for c, chat in enumerate(self.chats):
-            row = list(ids[c]) if c < len(ids) else []
-            for k, (name, png, caption) in enumerate(photos):
-                media = {"type": "photo", "media": "attach://pic", "caption": caption, "parse_mode": "HTML"}
-                try:
-                    if k >= len(row):
-                        raise TelegramRefused("message to edit not found", "editMessageMedia")
-                    self.call("editMessageMedia", data={"chat_id": chat, "message_id": row[k], "media": json.dumps(media)},
-                              files={"pic": (f"{name}.png", png, "image/png")})
-                except TelegramRefused as e:
-                    if "not modified" in str(e):
-                        continue
-                    if "not found" not in str(e) and "can't be edited" not in str(e):
-                        raise
-                    j = self.call("sendPhoto", data={"chat_id": chat, "caption": caption, "parse_mode": "HTML"},
-                                  files={"photo": (f"{name}.png", png, "image/png")})
-                    if k < len(row):
-                        row[k] = j["result"]["message_id"]
-                    else:
-                        row.append(j["result"]["message_id"])
-            out.append(row)
-        return out
+            row = ids[c] if c < len(ids) else []
+            if not row:
+                raise AlbumGone("album not found")
+            for k, (name, png) in sorted(edits.items()):
+                media = {"type": "photo", "media": "attach://pic"}
+                if k == 0:
+                    media.update(caption=caption, parse_mode="HTML")
+                self._edit(lambda: self.call("editMessageMedia", data={"chat_id": chat, "message_id": row[k],
+                                                                       "media": json.dumps(media)},
+                                             files={"pic": (f"{name}.png", png, "image/png")}))
+            if 0 not in edits:
+                self._edit(lambda: self.call("editMessageCaption", json={"chat_id": chat, "message_id": row[0],
+                                                                         "caption": caption, "parse_mode": "HTML"}))
 
-    def send_text(self, html: str) -> None:
-        for chat in self.chats:
-            self.call("sendMessage", json={"chat_id": chat, "text": html, "parse_mode": "HTML",
-                                           "disable_web_page_preview": True})
+    @staticmethod
+    def _reply(reply_to, c):
+        if reply_to and c < len(reply_to) and reply_to[c]:
+            return {"message_id": reply_to[c][0], "allow_sending_without_reply": True}
+        return None
 
-    def send_file(self, name: str, data: bytes, caption: str) -> None:
+    def send_text(self, html: str, reply_to=None, silent: bool = False) -> None:
+        for c, chat in enumerate(self.chats):
+            body = {"chat_id": chat, "text": html, "parse_mode": "HTML", "disable_web_page_preview": True,
+                    "disable_notification": silent}
+            if self._reply(reply_to, c):
+                body["reply_parameters"] = self._reply(reply_to, c)
+            self.call("sendMessage", json=body)
+
+    def send_file(self, name: str, data: bytes, caption: str, reply_to=None, silent: bool = False) -> None:
         mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        for chat in self.chats:
-            self.call("sendDocument", data={"chat_id": chat, "caption": caption, "parse_mode": "HTML"},
-                      files={"document": (name, data, mime)})
+        for c, chat in enumerate(self.chats):
+            form = {"chat_id": chat, "caption": caption, "parse_mode": "HTML",
+                    "disable_notification": "true" if silent else "false"}
+            if self._reply(reply_to, c):
+                form["reply_parameters"] = json.dumps(self._reply(reply_to, c))
+            self.call("sendDocument", data=form, files={"document": (name, data, mime)})
 
 
 class TelegramRefused(ReportError):
@@ -575,21 +675,22 @@ class DryRun:
         self.folder, self.n = folder, 0
         folder.mkdir(parents=True, exist_ok=True)
 
-    def send_photos(self, photos):
-        for name, png, caption in photos:
+    def send_album(self, photos, caption):
+        for name, png in photos:
             (self.folder / f"{name}.png").write_bytes(png)
-            print(f"[picture {name}.png] {re.sub('<[^>]+>', '', caption)}")
+        print(f"[album {', '.join(n for n, _ in photos)}]\n" + re.sub("<[^>]+>", "", caption))
         self.n += 1
         return [[self.n * 10 + k for k in range(len(photos))]]
 
-    def edit_photos(self, ids, photos):
-        self.send_photos(photos)
-        return ids
+    def edit_album(self, ids, edits, caption):
+        for k, (name, png) in edits.items():
+            (self.folder / f"{name}.png").write_bytes(png)
+        print("[album edited]\n" + re.sub("<[^>]+>", "", caption))
 
-    def send_text(self, html):
+    def send_text(self, html, reply_to=None, silent=False):
         print("[message] " + re.sub("<[^>]+>", "", html))
 
-    def send_file(self, name, data, caption):
+    def send_file(self, name, data, caption, reply_to=None, silent=False):
         (self.folder / name).write_bytes(data)
         print(f"[file {name}] {re.sub('<[^>]+>', '', caption)}")
 
@@ -599,21 +700,26 @@ class Ctx:
     def __init__(self, cfg, entsoe, volue, out, http):
         self.cfg, self.entsoe, self.volue, self.out, self.http = cfg, entsoe, volue, out, http
         self.errors: dict = {}
+        self.notes: dict = {}          # border -> why it is missing
         self.prices = Prices(self)
-
-    def capacity(self, border, d):
-        try:
-            return self.entsoe.capacity(border, d)
-        except SourceError as e:
-            self.errors[blabel(border)] = redact(e)
-            return None
 
     def capacity_range(self, border, d_from, d_to) -> dict:
         try:
-            return self.entsoe.capacity_range(border, d_from, d_to)
+            data, note = self.entsoe.capacity_range_noted(border, d_from, d_to)
         except SourceError as e:
             self.errors[blabel(border)] = redact(e)
             return {}
+        if data:
+            self.notes.pop(blabel(border), None)
+        elif note:
+            self.notes[blabel(border)] = note
+        return data
+
+    def capacity(self, border, d):
+        return self.capacity_range(border, d, d + DAY).get(d)
+
+    def why(self, border) -> str:
+        return self.errors.get(blabel(border)) or self.notes.get(blabel(border)) or "not on ENTSO-E yet"
 
 
 def _peak_idx(d: date, cfg) -> list[int]:
@@ -681,7 +787,7 @@ class CbcJob:
                 cols.append(None)
         known = sum(b in self.data for b in borders)
         at = f" at {t:%H:%M}" if t else ""
-        banner = f"CBC {group}: {known}/{len(self.active(borders))} borders known{at}" + (" · final" if final else "")
+        banner = f"CBC {group}: {known}/{len(borders)} borders known{at}" + (" · final" if final else "")
         footer = "Daily explicit capacity auctions, EUR/MWh · ENTSO-E · Peak = hours 9-20"
         if bam:
             footer += f" · {', '.join(bam)} converted from BAM at {BAM_PER_EUR}"
@@ -716,8 +822,15 @@ class PriceJob:
         self.inactive: set = set()
         self.checked = False
 
-    def poll(self):
-        todo = [m for m in self.markets if m not in self.data]
+    def start(self, m):
+        """When this market is first checked (its usual publication time minus a small margin)."""
+        return self.ctx.cfg["price_check_from"].get(m, self.ctx.cfg["price_check_from_default"])
+
+    def waiting(self):
+        return [m for m in self.markets if m not in self.data and m not in self.inactive]
+
+    def poll(self, t=None):
+        todo = [m for m in self.markets if m not in self.data and (t is None or t.time() >= self.start(m))]
         for m, r in zip(todo, parallel(lambda m: self.ctx.prices.day(m, self.d), todo)):
             if r:
                 self.data[m] = r
@@ -752,12 +865,17 @@ class PriceJob:
                 states.append("n/a" if (final or m in self.inactive) else "waiting")
                 cols.append(None)
         at = f" at {t:%H:%M}" if t else ""
-        banner = f"{len(self.data)}/{len(self.active())} markets ACTUAL{at}" + (" · final" if final else "")
+        banner = f"{len(self.data)}/{len(self.markets)} markets ACTUAL{at}" + (" · final" if final else "")
+        if not self.data and not final:
+            banner = "waiting for day-ahead results · " + self.ctx.cfg["publish_text"]
         via_entsoe = [label(m) for m in self.data if self.ctx.prices.source(m, self.d) == "ENTSO-E"]
         footer = "EUR/MWh · Peak = hours 9-20 · IT = PUN · source Volue" + \
                  (f" (ENTSO-E: {', '.join(via_entsoe)})" if via_entsoe else "")
         if self.ctx.volue is None or self.ctx.volue.disabled:
             footer += " · Volue not available - ENTSO-E used, no PUN"
+        fx = [(m, self.ctx.prices.converted[(m, self.d)]) for m in self.data if (m, self.d) in self.ctx.prices.converted]
+        if fx:
+            footer += " · " + ", ".join(f"{label(m)} from UAH at NBU {R.fmt(r, 4)}" for m, r in fx)
         return _table(self.d, self.ctx.cfg, [label(m) for m in self.markets], cols, states, banner, footer)
 
     # ---- calendars
@@ -807,14 +925,17 @@ class PriceJob:
         footer = f"{d:%B} MTD  B {R.fmt(mtd) or '-'}  P {R.fmt(run_p.get(d)) or '-'}"
         if mtd is not None and prev is not None:
             footer += f"   DoD {R.signed(mtd - prev)}"
-        block = {"title": title, "kind": "price", "weeks": cells, "mtd": mtd,
+        block = {"title": title, "kind": "price", "weeks": cells, "mtd": mtd, "mtd_p": run_p.get(d),
+                 "dod": (mtd - prev) if (mtd is not None and prev is not None) else None,
+                 "code": title.split(" ")[0], "month": f"{d:%B}",
                  "week_base": [avg(base.get(x) for x in wk if x <= d) for wk in weeks],
                  "week_peak": [avg(peak.get(x) for x in wk if x <= d) for wk in weeks],
                  "week_partial": [any(x > d or x not in base for x in wk) for wk in weeks], "footer": footer}
         if spread:
             name, ser = spread
             srun = self._running(ser, first, min(d, last))
-            block.update(spread_name=name, week_spread=[avg(ser.get(x) for x in wk if x <= d) for wk in weeks])
+            block.update(spread_name=name, week_spread=[avg(ser.get(x) for x in wk if x <= d) for wk in weeks],
+                         spread_mtd=srun.get(d))
             if srun.get(d) is not None:
                 block["footer"] += f"   {name} {R.signed(srun[d])}"
         return block
@@ -838,9 +959,12 @@ class PriceJob:
             rows = []
             for m in c["spreads"]:
                 name, ser = self._spread(stats, m)
+                pair = (m, c["spread_base"]) if m in c["country_first"] else (c["spread_base"], m)
                 rows.append((name, [avg(ser.get(x) for x in wk if x <= self.d) for wk in weeks]
-                             + [avg(v for x, v in ser.items() if first <= x <= self.d)]))
+                             + [avg(v for x, v in ser.items() if first <= x <= self.d)],
+                             (label(pair[0]), label(pair[1]))))
             blocks.append({"title": f"Week recap · spreads to {label(c['spread_base'])} (base)", "kind": "recap",
+                           "code": label(c["spread_base"]),
                            "columns": cols + [(f"{self.d:%b}", "MTD")], "rows": rows,
                            "footer": "Mon-Sun averages · * week so far · HUxx = HU-xx, DEHU/GRHU/ATHU = country-HU"})
         return blocks
@@ -865,10 +989,11 @@ class PriceJob:
             names = [b["title"].split(" ")[0] for b in page if b["kind"] == "price"]
             span = f"{names[0]}–{names[-1]}" if names else ""
             recap = " + spread recap" if any(b["kind"] == "recap" for b in page) else ""
-            title = f"Day-ahead calendar {k}/{len(pages)} · {self.d:%B %Y} · {span}{recap} · to {self.d:%a %d.%m}   ({legend})"
+            title = f"Day-ahead calendar {k}/{len(pages)} · {self.d:%B %Y} · {span}{recap} · to {self.d:%a %d.%m.%Y}"
             cap = (f"<b>Calendar {k}/{len(pages)} · {self.d:%B %Y} · {span}{recap}</b>\n{legend}\n"
                    "Week = Mon-Sun, spread to HU in blue (HUxx = HU − xx; DEHU, GRHU, ATHU = country − HU)")
-            out.append((f"prices_calendar_{k}", R.calendars_png(title, page, 3), cap))
+            out.append((f"prices_calendar_{k}", R.calendars_png(title, page, 3, legend + " · Week = Mon-Sun average, "
+                                                                 "blue = spread to HU · framed day = delivery day"), cap))
         return out
 
     def final_caption(self, t):
@@ -967,92 +1092,240 @@ def save_state(state: dict, message: str | None = None) -> None:
         log.warning("Could not save the state file: %s", type(e).__name__)
 
 
-# --------------------------------------------------------------------------- watcher
-def tick(job, st: dict, tg, ctx, final_time: dtime, state: dict) -> None:
-    t = now_local()
-    job.poll()
-    deadline = t.time() >= final_time
-    done = job.complete()
-    if st.get("final"):
-        return
-    if not st.get("posted"):
-        if job.ready() or (deadline and job.data):
-            st["msgs"] = tg.send_photos(job.render(done or deadline, t))
-            st.update(posted=True, sig=job.signature(), first_at=f"{t:%H:%M}")
-            log.info("%s: first post (%s)", job.key, job.signature() or "-")
-            save_state(state, f"{job.key} {job.d} posted")
-        elif deadline:
-            tg.send_text(escape(job.nothing_caption()))
-            st["final"] = True
-            save_state(state, f"{job.key} {job.d} nothing published")
-            return
-    elif job.signature() != st.get("sig") or ((done or deadline) and not st.get("final")):
-        st["msgs"] = tg.edit_photos(st.get("msgs", []), job.render(done or deadline, t))
-        st["sig"] = job.signature()
-        log.info("%s: updated (%d known)", job.key, len(job.data))
-        save_state(state)
-    if st.get("posted") and (done or deadline) and not st.get("final"):
-        if job.key == "cbc" or not ctx.cfg["excel"]:
-            tg.send_text(job.final_caption(t))
+# --------------------------------------------------------------------------- one album per delivery day
+class AlbumGone(ReportError):
+    """The album was deleted in Telegram: a new one is posted."""
+
+
+def log_missing(job, ctx) -> None:
+    missing = [b for b in job.borders if b not in job.data]
+    text = "; ".join(f"{blabel(b)}: {'no auction yesterday either' if b in job.inactive else ctx.why(b)}"
+                     for b in missing)
+    if text != getattr(job, "_logged", None):
+        job._logged = text
+        log.info("CBC %s - %d/%d known%s", job.d, len(job.data), len(job.borders),
+                 f". Missing: {text}" if text else "")
+
+
+def _listing(names: list[str], waiting: list[str]) -> str:
+    if len(names) <= 8:
+        return ", ".join(names)
+    return f"{len(names)} new" + (f" · still waiting: {', '.join(waiting)}" if waiting else " · all in")
+
+
+class DayReport:
+    """Everything for one delivery day in ONE Telegram album (CBC SEE, CBC CH, DA prices table, calendars)
+    with the counts in the caption; new data edits the album and a short reply says what came in."""
+
+    def __init__(self, ctx, d: date):
+        self.ctx, self.d, self.cfg = ctx, d, ctx.cfg
+        self.cbc, self.da = CbcJob(ctx, d), PriceJob(ctx, d)
+
+    def cbc_done(self, t) -> bool:
+        return (self.cbc.checked and self.cbc.complete()) or t.time() >= self.cfg["cbc_final"]
+
+    def da_done(self, t) -> bool:
+        return (self.da.checked and self.da.complete()) or t.time() >= self.cfg["prices_final"]
+
+    def final(self, t) -> bool:
+        return self.cbc_done(t) and self.da_done(t)
+
+    def cbc_due(self, t) -> bool:
+        return t.time() >= self.cfg["cbc_start"] and not self.cbc_done(t)
+
+    def da_due(self, t) -> bool:
+        return not self.da_done(t) and any(t.time() >= self.da.start(m) for m in self.da.waiting())
+
+    def due(self, t) -> bool:
+        return self.cbc_due(t) or self.da_due(t)
+
+    def next_check(self, t):
+        """The next time something starts to be due (None when nothing more is coming today)."""
+        times = []
+        if not self.cbc_done(t) and t.time() < self.cfg["cbc_start"]:
+            times.append(self.cfg["cbc_start"])
+        if not self.da_done(t):
+            times += [self.da.start(m) for m in self.da.waiting() if self.da.start(m) > t.time()]
+        return datetime.combine(t.date(), min(times), TZ) if times else None
+
+    def poll(self, t, everything: bool = False) -> None:
+        if everything or self.cbc_due(t):
+            self.cbc.poll()
+            log_missing(self.cbc, self.ctx)
+        if everything or self.da_due(t):
+            self.da.poll(None if everything else t)
+
+    def known(self):
+        return sorted(blabel(b) for b in self.cbc.data), sorted(label(m) for m in self.da.data)
+
+    def counts(self):
+        out = [(f"CBC {g}", sum(b in self.cbc.data for b in bs), len(bs)) for g, bs in self.cbc.groups]
+        out.append(("DA prices", len(self.da.data), len(self.da.markets)))
+        cal = self.cfg["calendar_countries"]
+        out.append(("Calendar", sum(m in self.da.data for m in cal), len(cal)))
+        return out
+
+    def missing(self) -> list[str]:
+        return ([blabel(b) for b in self.cbc.borders if b not in self.cbc.data]
+                + [label(m) for m in self.da.markets if m not in self.da.data])
+
+    def caption(self, t, final: bool, snapshot: bool = False) -> str:
+        lines = [f"⚡ <b>Delivery {self.d:%a %d.%m.%Y}</b>"]
+        lines += [f"• {name} {k}/{n}" for name, k, n in self.counts()]
+        if snapshot:
+            status = f"snapshot {t:%H:%M} · the automatic post updates itself"
+        elif final:
+            status = "✅ complete" if not self.missing() else f"final {t:%H:%M}"
         else:
-            tg.send_file(f"N1POWER_{job.d:%Y-%m}.xlsx", month_workbook(ctx, job.d, t, job), job.final_caption(t))
-        st.update(final=True, final_at=f"{t:%H:%M}")
-        log.info("%s: final", job.key)
-        save_state(state, f"{job.key} {job.d} final")
+            status = f"updated {t:%H:%M} · still filling in"
+        lines.append(f"🕑 <i>{status}</i>")
+        if (final or snapshot) and self.missing():
+            lines.append(f"<i>n/a: {escape(', '.join(self.missing()))}</i>"[:600])
+        return "\n".join(lines)
+
+    def new_spreads(self, old_da: set) -> list[str]:
+        c, hu = self.cfg, self.cfg["spread_base"]
+        out = []
+        for m in c["spreads"]:
+            if m in self.da.data and hu in self.da.data and not (label(m) in old_da and label(hu) in old_da):
+                a, b = (m, hu) if m in c["country_first"] else (hu, m)
+                out.append(f"{label(a)}{label(b)}")
+        return out
+
+    def note(self, t, old_cbc: set, old_da: set):
+        """What came in since the last post, e.g. 'CBC SEE: HU-RS' / 'UA price' / 'Spreads: GRHU'."""
+        lines = [f"🔄 <b>Updated {t:%H:%M}</b> · delivery {self.d:%a %d.%m}"]
+        for g, bs in self.cbc.groups:
+            names = [blabel(b) for b in bs if b in self.cbc.data and blabel(b) not in old_cbc]
+            if names:
+                waiting = [blabel(b) for b in self.cbc.active(bs) if b not in self.cbc.data]
+                lines.append(f"• CBC {g}: {_listing(names, waiting)}")
+        new_da = [label(m) for m in self.da.markets if m in self.da.data and label(m) not in old_da]
+        if new_da:
+            waiting = [label(m) for m in self.da.active() if m not in self.da.data]
+            lines.append(f"• {new_da[0]} price" if len(new_da) == 1 else f"• DA prices: {_listing(new_da, waiting)}")
+            spreads = self.new_spreads(old_da)
+            if spreads:
+                lines.append(f"• Spreads: {', '.join(spreads) if len(spreads) <= 8 else f'{len(spreads)} updated'}")
+        return "\n".join(lines) if len(lines) > 1 else None
+
+    def photos(self, t, which=("cbc", "da")) -> list[tuple[str, bytes]]:
+        out = []
+        if "cbc" in which:
+            out += [(n, png) for n, png, _ in self.cbc.render(self.cbc_done(t), t)]
+        if "da" in which:
+            out += [(n, png) for n, png, _ in self.da.render(self.da_done(t), t)]
+        return out
+
+
+def step(rep: DayReport, st: dict, tg, state: dict) -> None:
+    t = now_local()
+    rep.poll(t)
+    cbc_now, da_now = rep.known()
+    final = rep.final(t)
+    if not st.get("ids"):
+        if cbc_now or da_now:                                       # first data of the day: post the album
+            photos = rep.photos(t)
+            st["ids"] = tg.send_album(photos, rep.caption(t, final))
+            st.update(names=[n for n, _ in photos], cbc=cbc_now, da=da_now, posted=f"{t:%H:%M}", final=final)
+            log.info("Album posted for %s: %s", rep.d, ", ".join(f"{n} {k}/{m}" for n, k, m in rep.counts()))
+            save_state(state, f"{rep.d} posted")
+        elif final:
+            tg.send_text(escape(f"Delivery {rep.d:%a %d.%m.%Y}: nothing was published by "
+                                f"{max(rep.cfg['cbc_final'], rep.cfg['prices_final']):%H:%M}."))
+            st.update(final=True, excel=True)
+            save_state(state, f"{rep.d} nothing published")
+    else:
+        old_cbc, old_da = set(st.get("cbc", [])), set(st.get("da", []))
+        lost = (old_cbc - set(cbc_now)) | (old_da - set(da_now))     # a source hiccup: wait for the next check
+        if lost and not final:
+            log.info("Not updating yet, these did not answer this time: %s", ", ".join(sorted(lost)))
+            return
+        changed = {k for k, old, now in (("cbc", old_cbc, cbc_now), ("da", old_da, da_now)) if set(now) - old}
+        if final and not st.get("final"):
+            changed |= {"cbc", "da"}                                  # waiting -> n/a, caption 'final'
+        if changed:
+            caption = rep.caption(t, final)
+            photos = rep.photos(t, changed)
+            edits = {st["names"].index(n): (n, png) for n, png in photos if n in st.get("names", [])}
+            try:
+                tg.edit_album(st["ids"], edits, caption)
+            except AlbumGone:
+                photos = rep.photos(t)
+                st["ids"] = tg.send_album(photos, caption)
+                st["names"] = [n for n, _ in photos]
+            note = rep.note(t, old_cbc, old_da)
+            if note:
+                tg.send_text(note, reply_to=st["ids"])
+            st.update(cbc=sorted(old_cbc | set(cbc_now)), da=sorted(old_da | set(da_now)), final=final)
+            log.info("Album updated for %s: %s", rep.d, ", ".join(f"{n} {k}/{m}" for n, k, m in rep.counts()))
+            save_state(state, f"{rep.d} updated {t:%H:%M}")
+    if st.get("final") and not st.get("excel"):
+        if rep.cfg["excel"]:
+            tg.send_file(f"N1POWER_{rep.d:%Y-%m}.xlsx", month_workbook(rep.ctx, rep.d, t, rep.da),
+                         f"📊 <b>{rep.d:%B %Y}</b> · prices and CBC up to {rep.d:%a %d.%m}",
+                         reply_to=st.get("ids"), silent=True)
+        st["excel"] = True
+        save_state(state, f"{rep.d} month file sent")
+
+
+def sync_repo() -> None:
+    """Start from the latest saved state: a queued run can be checked out before the previous run saved it."""
+    if os.getenv("GITHUB_ACTIONS") != "true":
+        return
+    branch = os.getenv("GITHUB_REF_NAME") or "main"
+    try:
+        git = lambda *a: subprocess.run(["git", *a], cwd=STATE_FILE.parent, capture_output=True, text=True, timeout=60)
+        if git("fetch", "-q", "origin", branch).returncode == 0:
+            git("checkout", "-q", "-B", branch, f"origin/{branch}")
+    except Exception as e:  # never stop the bot because of this
+        log.warning("Could not load the latest state: %s", type(e).__name__)
 
 
 def watch(ctx, tg, run_minutes: float) -> None:
     cfg = ctx.cfg
+    sync_repo()
     stop = now_local() + timedelta(minutes=run_minutes)
     d = now_local().date() + DAY
     state = load_state()
-    jobs = [(CbcJob(ctx, d), cfg["cbc_start"], cfg["cbc_final"]),
-            (PriceJob(ctx, d), cfg["prices_start"], cfg["prices_final"])]
+    st = state.setdefault(d.isoformat(), {})
+    rep = DayReport(ctx, d)
     log.info("Watching delivery day %s", d)
     while True:
         t = now_local()
         if t.date() + DAY != d:
             break
-        waiting = []
-        for job, start, final in jobs:
-            st = state.setdefault(d.isoformat(), {}).setdefault(job.key, {})
-            if st.get("final"):
-                continue
-            if t.time() >= start:
-                tick(job, st, tg, ctx, final, state)
-            if not st.get("final"):
-                waiting.append(start)
-        if not waiting:
+        if st.get("final") and st.get("excel"):
             log.info("Everything for %s is sent", d)
             break
-        t = now_local()
-        upcoming = [s for s in waiting if s > t.time()]
-        if len(upcoming) == len(waiting):          # nothing running yet: sleep until the next window
-            wait = (datetime.combine(t.date(), min(upcoming), TZ) - t).total_seconds()
-        else:
-            wait = cfg["poll"]
-        if t + timedelta(seconds=wait) > stop:
+        if rep.due(t) or rep.final(t):
+            step(rep, st, tg, state)
+            if st.get("final") and st.get("excel"):
+                continue
+            t = now_local()
+        if rep.due(t):
+            wake = t + timedelta(seconds=cfg["poll"])
+        else:                                   # nothing due: sleep until the next publication time
+            wake = rep.next_check(t) or t + timedelta(seconds=cfg["poll"])
+        if wake > stop:
             break
-        pause(max(wait, 1))
+        pause(max((wake - now_local()).total_seconds(), 1))
     save_state(state)
 
 
 def send_now(ctx, tg, d: date) -> None:
+    """One snapshot album right away (manual run); the automatic album is not touched."""
     t = now_local()
-    cbc, prices = CbcJob(ctx, d), PriceJob(ctx, d)
-    cbc.poll()
-    prices.poll()
-    if cbc.data:
-        tg.send_photos(cbc.render(cbc.complete(), t))
-    else:
-        tg.send_text(escape(f"CBC {d:%a %d.%m.%Y}: no capacity auction results on ENTSO-E yet."))
-    if prices.data:
-        tg.send_photos(prices.render(prices.complete(), t))
-    else:
-        tg.send_text(escape(f"DA prices {d:%a %d.%m.%Y}: not published yet."))
-    if ctx.cfg["excel"] and (cbc.data or prices.data):
-        tg.send_file(f"N1POWER_{d:%Y-%m}.xlsx", month_workbook(ctx, d, t, prices),
-                     f"📊 {d:%B %Y} file · prices and CBC up to {d:%a %d.%m}")
+    rep = DayReport(ctx, d)
+    rep.poll(t, everything=True)
+    cbc_now, da_now = rep.known()
+    if not cbc_now and not da_now:
+        tg.send_text(escape(f"Delivery {d:%a %d.%m.%Y}: nothing published yet."))
+        return
+    ids = tg.send_album(rep.photos(t), rep.caption(t, False, snapshot=True))
+    if ctx.cfg["excel"]:
+        tg.send_file(f"N1POWER_{d:%Y-%m}.xlsx", month_workbook(ctx, d, t, rep.da),
+                     f"📊 <b>{d:%B %Y}</b> · prices and CBC up to {d:%a %d.%m}", reply_to=ids, silent=True)
 
 
 def find_chat_id(token: str, http) -> int:
@@ -1090,12 +1363,14 @@ def load_config(path: Path) -> dict:
     sc, pr, ca, cb, tg = (c.get(k, {}) for k in ("schedule", "prices", "calendar", "cbc", "telegram"))
     borders = lambda lst: [tuple(norm(x) for x in b.split(">", 1)) for b in lst]
     peak = str(pr.get("peak", "08:00-20:00")).split("-")
-    return {
-        "cbc_start": _hhmm(sc.get("cbc_start", "09:15")), "cbc_final": _hhmm(sc.get("cbc_final", "12:30")),
+    cfg = {
+"cbc_start": _hhmm(sc.get("cbc_start", "09:30")), "cbc_final": _hhmm(sc.get("cbc_final", "17:00")),
         "prices_start": _hhmm(sc.get("prices_start", "12:55")),
-        "prices_final": _hhmm(sc.get("prices_final", "16:00")),
+        "prices_final": _hhmm(sc.get("prices_final", "17:00")),
         "prices_first": norm(sc.get("prices_first_post_when", "HU")),
-        "poll": float(sc.get("check_every_seconds", 60)),
+        "poll": float(sc.get("check_every_seconds", 30)),
+        "early": int(sc.get("check_early_minutes", 5)),
+        "run_minutes": float(sc.get("run_minutes", 0)) or None,
         "markets": [norm(m) for m in pr.get("markets", [])],
         "peak": (_hhmm(peak[0]).hour, _hhmm(peak[1]).hour),
         "sources": [s.lower() for s in pr.get("sources", ["volue", "entsoe"])],
@@ -1108,6 +1383,20 @@ def load_config(path: Path) -> dict:
         "cbc_see": borders(cb.get("see", [])), "cbc_ch": borders(cb.get("ch", [])),
         "excel": bool(tg.get("excel_when_final", True)),
     }
+    return _price_times(cfg, pr)
+
+
+def _price_times(cfg: dict, pr: dict) -> dict:
+    """Per-market publication times -> when each market is first checked."""
+    pub = {str(k).upper(): v for k, v in pr.get("publish", {}).items()}
+    default = _hhmm(pub.pop("DEFAULT", f"{cfg['prices_start']:%H:%M}"))
+    early = timedelta(minutes=cfg["early"])
+    shift = lambda tt: (datetime.combine(date(2000, 1, 1), tt) - early).time()
+    cfg["price_check_from"] = {norm(k): shift(_hhmm(v)) for k, v in pub.items()}
+    cfg["price_check_from_default"] = shift(default)
+    parts = [f"{label(norm(k))} {v}" for k, v in sorted(pub.items(), key=lambda kv: kv[1])]
+    cfg["publish_text"] = ", ".join(parts + [f"others {default:%H:%M}"])
+    return cfg
 
 
 def main(argv=None) -> int:
@@ -1141,7 +1430,7 @@ def main(argv=None) -> int:
         volue = Volue(vid, vsecret, http, cfg["volue_curves"]) if vid and vsecret else None
         ctx = Ctx(cfg, Entsoe(entsoe_key, http), volue, tg, http)
         if a.watch:
-            watch(ctx, tg, a.run_minutes)
+            watch(ctx, tg, cfg["run_minutes"] or a.run_minutes)
         else:
             d = date.fromisoformat(a.date or env("DELIVERY_DATE") or (now_local().date() + DAY).isoformat())
             send_now(ctx, tg, d)

@@ -3,12 +3,12 @@
 #             IT_CALA IT_SICI IT_SARD MD ME MK NL PL PT RO RS SI SK TR UA XK
 
 [schedule]
-cbc_start = "09:15"              # start checking tomorrow's daily capacity auctions
-cbc_final = "12:30"              # stop waiting; borders still missing are shown as n/a
-prices_start = "12:55"           # start checking tomorrow's day-ahead prices
-prices_first_post_when = "HU"    # first price post as soon as this market is published
-prices_final = "16:00"           # stop waiting; markets still missing are shown as n/a
-check_every_seconds = 60
+cbc_start = "09:30"              # start checking tomorrow's daily capacity auctions (first results ~09:35)
+cbc_final = "17:00"              # keep updating until then; borders still missing are shown as n/a
+prices_final = "17:00"           # keep updating until then; markets still missing are shown as n/a
+check_every_seconds = 30         # how often missing data is checked while something is due
+check_early_minutes = 5          # start checking each market this many minutes before its usual time
+run_minutes = 48                 # each GitHub run watches this long; a new run starts every 20 minutes
 
 [prices]
 # Hourly price table, in this order
@@ -17,6 +17,15 @@ markets = ["IT", "IT_CSUD", "IT_NORD", "IT_SUD", "HU", "SI", "HR", "RS", "RO", "
 peak = "08:00-20:00"             # = hours 9-20
 sources = ["volue", "entsoe"]    # Volue first, ENTSO-E for what Volue does not have
 # volue_curves = { UA = "pri ua spot €/mwh cet h a" }   # only if a Volue curve has another name
+
+[prices.publish]
+# Usual publication time of each day-ahead market (CET). The bot checks every 30 s from 5 min before,
+# and sleeps when nothing is due (e.g. ME, MK, RS in -> nothing until Core at 12:55).
+ME = "10:30"      # MEPX
+MK = "10:45"      # MEMO
+CH = "11:10"      # EPEX Swiss
+RS = "11:10"      # SEEPEX
+default = "12:55" # Core / SDAC and all other markets (incl. AL, IT PUN, UA) - add a line to give a market its own time
 
 [calendar]
 # One calendar per country with the full daily base price, running month average and Mon-Sun week average
