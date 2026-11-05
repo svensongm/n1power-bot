@@ -1,0 +1,15 @@
+{
+ "2026-11-06": {
+  "cbc": {
+   "first_at": "14:56",
+   "msgs": [
+    [
+     11,
+     12
+    ]
+   ],
+   "posted": true,
+   "sig": "AL>GR,AL>ME,AT>CH,BA>HR,BA>ME,BA>RS,GR>AL,GR>MK,GR>TR,HR>BA,IT>CH,IT>ME,ME>AL,ME>BA,ME>IT,ME>RS,ME>XK,MK>GR,MK>RS,MK>XK,RO>RS,RS>BA,RS>BG,RS>HR,RS>HU,RS>ME,RS>MK,RS>RO,TR>GR,XK>ME,XK>MK"
+  }
+ }
+}
