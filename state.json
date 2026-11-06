@@ -82,7 +82,10 @@
  "2026-11-07": {
   "cbc": [
    "BA-RS",
-   "RS-BA"
+   "ME-RS",
+   "MK-RS",
+   "RS-BA",
+   "RS-MK"
   ],
   "da": [],
   "final": false,
