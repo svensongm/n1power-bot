@@ -2,7 +2,7 @@ name: N1 POWER bot
 
 on:
   schedule:
-    # every 20 minutes 06:07-15:47 UTC; the bot itself works 09:15-16:00 CET/CEST
+    # every 20 minutes 06:07-15:47 UTC; the bot itself works 09:30-17:00 CET/CEST
     - cron: "7,27,47 6-15 * * *"
   workflow_dispatch:
     inputs:
@@ -12,6 +12,7 @@ on:
         options:
           - send report now
           - show my Telegram chat id
+          - test JAO connection
         default: send report now
       delivery_date:
         description: "Delivery day YYYY-MM-DD (empty = tomorrow)"
@@ -43,13 +44,15 @@ jobs:
           VOLUE_CLIENT_SECRET: ${{ secrets.VOLUE_CLIENT_SECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JAO_API_KEY: ${{ secrets.JAO_API_KEY }}
           ACTION: ${{ github.event_name == 'schedule' && 'watch' || inputs.action }}
           DELIVERY_DATE: ${{ inputs.delivery_date }}
         run: |
           git config user.name "n1power-bot"
           git config user.email "n1power-bot@users.noreply.github.com"
           case "$ACTION" in
-            watch) python da_cbc_report.py --watch --run-minutes 39 ;;
+            watch) python da_cbc_report.py --watch --run-minutes 48 ;;
             "show my Telegram chat id") python da_cbc_report.py --find-chat-id ;;
+            "test JAO connection") python da_cbc_report.py --test-jao ;;
             *) python da_cbc_report.py --now ;;
           esac
