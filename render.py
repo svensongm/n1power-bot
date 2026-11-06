@@ -314,7 +314,7 @@ def draw_flag(ax, code: str, x: float, y: float, w: float, h: float, z: float = 
 INK, MUTED, LINE = "#0F172A", "#64748B", "#E2E8F0"
 HEADBAND, CHIP, ACCENT, PAGE = "#1E293B", "#334155", "#2563EB", "#EEF2F7"
 SPREAD_BG, SPREAD_INK = "#DBEAFE", "#1D4ED8"
-CW, HEADH, DOWH, WH, FOOTH = 74, 38, 20, 60, 28
+CW, HEADH, DOWH, WH, FOOTH = 74, 38, 20, 74, 28
 DOW = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN", "WEEK"]
 
 
@@ -328,8 +328,16 @@ def _rbox(ax, x, y, w, h, fc, ec="none", lw=0.0, r=6, z=2, alpha=1.0):
                                 edgecolor=ec, linewidth=lw, zorder=z, alpha=alpha))
 
 
-def _card(cv: Canvas, x0, y0, w, h, code, title, chip=None):
-    """Card with shadow, dark header band with flag and title, optional chip on the right."""
+def _tw(text: str, size: float, bold: bool = True) -> float:
+    """Width of a text in canvas pixels (the canvas is drawn at 100 px per inch)."""
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+    prop = FontProperties(weight="bold" if bold else "normal")
+    return TextPath((0, 0), text, size=size, prop=prop).get_extents().width * 100 / 72
+
+
+def _card(cv: Canvas, x0, y0, w, h, code, title, chip=None, chip2=None):
+    """Card with shadow, dark header band with flag and title, chips on the right (chip2: blue, left of chip)."""
     ax = cv.ax
     _rbox(ax, x0 + 2, y0 + 3, w, h, "#0F172A", r=12, z=0.5, alpha=0.10)
     _rbox(ax, x0, y0, w, h, "#FFFFFF", "#CBD5E1", 0.6, r=12, z=1)
@@ -338,10 +346,16 @@ def _card(cv: Canvas, x0, y0, w, h, code, title, chip=None):
     if code:
         draw_flag(ax, code, x0 + 14, y0 + 9, 30, 20)
     cv.text(x0 + (54 if code else 14), y0 + HEADH / 2 + 1, title, 10.5, True, "#FFFFFF", "left")
+    right = x0 + w - 12
     if chip:
-        cw = 9 + 5.4 * len(chip)
-        _rbox(ax, x0 + w - 12 - cw, y0 + 9, cw, 20, CHIP, r=10, z=2)
-        cv.text(x0 + w - 12 - cw / 2, y0 + 19.5, chip, 7.6, True, "#F8FAFC")
+        cw = 16 + _tw(chip, 7.6)
+        _rbox(ax, right - cw, y0 + 9, cw, 20, CHIP, r=10, z=2)
+        cv.text(right - cw / 2, y0 + 19.5, chip, 7.6, True, "#F8FAFC")
+        right -= cw + 6
+    if chip2:
+        cw = 16 + _tw(chip2, 7.8)
+        _rbox(ax, right - cw, y0 + 9, cw, 20, SPREAD_BG, r=10, z=2)
+        cv.text(right - cw / 2, y0 + 19.5, chip2, 7.8, True, SPREAD_INK)
 
 
 def _calendar_block(cv: Canvas, x0, y0, b: dict, n_weeks: int):
@@ -352,7 +366,8 @@ def _calendar_block(cv: Canvas, x0, y0, b: dict, n_weeks: int):
     h = HEADH + DOWH + WH * n_weeks + FOOTH + 4
     code = b.get("code", "")
     chip = f"MTD  B {fmt(b['mtd'])}" if b.get("mtd") is not None else None
-    _card(cv, x0, y0, w, h, code, f"{code} · {NAMES.get(code, code)}", chip)
+    chip2 = f"{b['spread_name']} MTD {signed(b['spread_mtd'])}" if b.get("spread_mtd") is not None else None
+    _card(cv, x0, y0, w, h, code, f"{code} · {NAMES.get(code, code)}", chip, chip2)
     y = y0 + HEADH
     for j, dname in enumerate(DOW):
         col = ACCENT if j == 7 else ("#94A3B8" if j >= 5 else MUTED)
@@ -378,26 +393,29 @@ def _calendar_block(cv: Canvas, x0, y0, b: dict, n_weeks: int):
             cv.text(x + 8, y + 11, str(c["day"]), 6.6, c["in_month"], day_col, "left")
             if known:
                 ink = INK if c["in_month"] else "#A3AEC0"
-                cv.text(x + CW / 2, y + 25, "B " + fmt(c["base"]), 8.3, c["in_month"], ink)
+                cv.text(x + CW / 2, y + 24, "B " + fmt(c["base"]), 8.3, c["in_month"], ink)
                 if c["peak"] is not None:
-                    cv.text(x + CW / 2, y + 38, "P " + fmt(c["peak"]), 7, False, ink)
+                    cv.text(x + CW / 2, y + 36, "P " + fmt(c["peak"]), 7, False, ink)
                 if c["in_month"] and c["mtd"] is not None:
-                    cv.text(x + CW / 2, y + 50, "MTD " + fmt(c["mtd"]), 6, False, "#475569")
+                    cv.text(x + CW / 2, y + 47, "MTD " + fmt(c["mtd"]), 6, False, "#475569")
+                if c["in_month"] and c.get("spread") is not None:
+                    _rbox(ax, x + 6, y + 53, CW - 12, 13, "#FFFFFF", r=6, z=3, alpha=0.85)
+                    cv.text(x + CW / 2, y + 59.5, f"{b['spread_name']} {signed(c['spread'])}", 6.3, True, SPREAD_INK)
             if c.get("target"):
                 target = (x, y)
         if wk is not None:
             xw = x0 + CW * 7
             _rbox(ax, xw + 2.5, y + 2.5, CW - 5, WH - 5, "#F1F5F9", r=7)
             if b["week_base"][k] is not None:
-                cv.text(xw + CW / 2, y + 15, "B " + fmt(b["week_base"][k]), 8.3, True, INK)
+                cv.text(xw + CW / 2, y + 17, "B " + fmt(b["week_base"][k]), 8.3, True, INK)
                 if b["week_peak"][k] is not None:
-                    cv.text(xw + CW / 2, y + 28, "P " + fmt(b["week_peak"][k]), 7, False, INK)
+                    cv.text(xw + CW / 2, y + 30, "P " + fmt(b["week_peak"][k]), 7, False, INK)
                 ws = (b.get("week_spread") or [None] * len(b["weeks"]))[k]
                 if ws is not None:
-                    _rbox(ax, xw + 5, y + 34, CW - 10, 13, SPREAD_BG, r=6, z=3)
-                    cv.text(xw + CW / 2, y + 40.5, f"{b['spread_name']} {signed(ws)}", 5.9, True, SPREAD_INK)
+                    _rbox(ax, xw + 5, y + 39, CW - 10, 15, SPREAD_BG, r=7, z=3)
+                    cv.text(xw + CW / 2, y + 46.5, f"{b['spread_name']} {signed(ws)}", 6.6, True, SPREAD_INK)
                 if b["week_partial"][k]:
-                    cv.text(xw + CW / 2, y + 53, "so far", 5.6, False, "#94A3B8", italic=True)
+                    cv.text(xw + CW / 2, y + 63, "so far", 5.8, False, "#94A3B8", italic=True)
         y += WH
     if target:
         _rbox(ax, target[0] + 1.5, target[1] + 1.5, CW - 3, WH - 3, "none", ACCENT, 2.4, r=8, z=5)
@@ -406,13 +424,8 @@ def _calendar_block(cv: Canvas, x0, y0, b: dict, n_weeks: int):
     ax.add_patch(Rectangle((x0 + 1, fy), w - 2, 0.8, facecolor=LINE, edgecolor="none", zorder=2))
     parts = f"{b.get('month', '')} MTD   B {fmt(b.get('mtd')) or '-'}   P {fmt(b.get('mtd_p')) or '-'}"
     if b.get("dod") is not None:
-        parts += f"   ·   DoD {signed(b['dod'])}"
+        parts += f"   ·   MTD vs previous day {signed(b['dod'])}"
     cv.text(x0 + 14, fy + FOOTH / 2 + 1, parts, 7.6, True, INK, "left")
-    if b.get("spread_mtd") is not None:
-        txt = f"{b['spread_name']} MTD {signed(b['spread_mtd'])}"
-        cw = 10 + 5.2 * len(txt)
-        _rbox(ax, x0 + w - 12 - cw, fy + 6, cw, FOOTH - 12, SPREAD_BG, r=8, z=3)
-        cv.text(x0 + w - 12 - cw / 2, fy + FOOTH / 2 + 0.5, txt, 7, True, SPREAD_INK)
 
 
 def _recap_block(cv: Canvas, x0, y0, b: dict, height):
@@ -498,8 +511,9 @@ def xl_hourly(ws, top: int, left: int, t: dict) -> int:
     ws.cell(top, left, t["date"]).font = X["Font"](bold=True)
     ws.cell(top, left).fill = X["fill"](BANNER)
     ws.cell(top, left + 1, t["weekday"]).font = X["Font"](bold=True)
-    ws.merge_cells(start_row=top, start_column=left + 2, end_row=top, end_column=left + n)
-    bc = ws.cell(top, left + 2, t["banner"])
+    ws.merge_cells(start_row=top, start_column=left + 1, end_row=top, end_column=left + 2)
+    ws.merge_cells(start_row=top, start_column=left + 3, end_row=top, end_column=left + n)
+    bc = ws.cell(top, left + 3, t["banner"])
     bc.font, bc.fill, bc.alignment = X["Font"](bold=True, color="C65911"), X["fill"](BANNER), X["center"]
     for j, h in enumerate(["Hour"] + t["headers"]):
         c = ws.cell(top + 1, left + j, h)
@@ -617,6 +631,203 @@ def xl_matrix(ws, top: int, left: int, title: str, corner: str, cols: list[str],
             if col and v is not None:
                 c.fill = X["fill"](col)
     return len(rows) + 3
+
+
+# --------------------------------------------------------------------------- Excel calendar cards (same look as the pictures)
+def _xl_flag(codes, h: int = 20):
+    """Excel picture with one or two drawn flags side by side."""
+    from openpyxl.drawing.image import Image as XLImage
+    fw, gap = h * 1.5, 3
+    W = fw * len(codes) + gap * (len(codes) - 1)
+    k = 4                                                     # draw 4x larger, shown at h px: sharp
+    fig = plt.figure(figsize=(W * k / 100, h * k / 100), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(h, 0)
+    ax.axis("off")
+    for i, c in enumerate(codes):
+        draw_flag(ax, c, i * (fw + gap), 0, fw, h)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100, transparent=True)
+    plt.close(fig)
+    buf.seek(0)
+    img = XLImage(buf)
+    img.width, img.height = round(W), round(h)
+    return img
+
+
+def _xl_place(ws, img, row: int, col: int, dx: int = 6, dy: int = 6) -> None:
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
+    from openpyxl.drawing.xdr import XDRPositiveSize2D
+    from openpyxl.utils.units import pixels_to_EMU
+    marker = AnchorMarker(col=col - 1, colOff=pixels_to_EMU(dx), row=row - 1, rowOff=pixels_to_EMU(dy))
+    img.anchor = OneCellAnchor(_from=marker, ext=XDRPositiveSize2D(pixels_to_EMU(img.width), pixels_to_EMU(img.height)))
+    ws.add_image(img)
+
+
+def xl_cards(ws, top: int, blocks: list[dict], ncols: int = 3) -> int:
+    """Calendar cards and the week recap laid out like the Telegram pictures; returns the rows used."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    def fill(h):
+        return PatternFill("solid", fgColor=h.lstrip("#"))
+
+    def hx(h):
+        return h.lstrip("#")
+
+    def edge(cell, **sides):
+        b = cell.border
+        cell.border = Border(left=sides.get("left", b.left), right=sides.get("right", b.right),
+                             top=sides.get("top", b.top), bottom=sides.get("bottom", b.bottom))
+
+    white, sep = Side(style="thin", color="FFFFFF"), Side(style="thick", color="FFFFFF")
+    accent, line = Side(style="medium", color=hx(ACCENT)), Side(style="thin", color=hx(LINE))
+    center = Alignment(horizontal="center", vertical="center")
+    cals = [b for b in blocks if b["kind"] != "recap"]
+    n_weeks = max((len(b["weeks"]) for b in cals), default=5)
+    body = 5 * n_weeks
+    card_rows = 2 + body + 1                                   # header, weekdays, weeks, footer
+    for i, b in enumerate(blocks):
+        r, c = divmod(i, ncols)
+        r0, c0 = top + r * (card_rows + 1), 1 + c * 8
+        ws.row_dimensions[r0].height = 27
+        ws.row_dimensions[r0 + 1].height = 15
+        for k in range(body):
+            ws.row_dimensions[r0 + 2 + k].height = 14
+        ws.row_dimensions[r0 + 2 + body].height = 20
+        ws.row_dimensions[r0 + card_rows].height = 10
+        # header band: flag, title, chip
+        for j in range(8):
+            ws.cell(r0, c0 + j).fill = fill(HEADBAND if j < 5 else CHIP)
+        code = b.get("code", "")
+        if b["kind"] == "recap":
+            title, chip = b["title"], "EUR/MWh"
+        else:
+            title = f"{code} · {NAMES.get(code, code)}"
+            chip = f"MTD  B {fmt(b['mtd'])}" if b.get("mtd") is not None else ""
+            if b.get("spread_mtd") is not None:                # month spread to HU in the header, blue
+                sh = ws.cell(r0, c0 + 5, f"{b['spread_name']} MTD {signed(b['spread_mtd'])}")
+                sh.font = Font(bold=True, color="93C5FD", size=10)
+                sh.alignment = Alignment(horizontal="left", vertical="center")
+        tc = ws.cell(r0, c0, title)
+        tc.font = Font(bold=True, color="FFFFFF", size=12)
+        tc.alignment = Alignment(horizontal="left", vertical="center", indent=6 if code else 1)
+        if code:
+            _xl_place(ws, _xl_flag([code], 20), r0, c0, 8, 8)
+        cc = ws.cell(r0, c0 + 7, chip)
+        cc.font = Font(bold=True, color="FFFFFF", size=10)
+        cc.alignment = Alignment(horizontal="right", vertical="center")
+        if c > 0:
+            for k in range(card_rows):
+                edge(ws.cell(r0 + k, c0), left=sep)
+        if b["kind"] == "recap":
+            _xl_recap(ws, b, r0, c0, body, fill, edge, center, line)
+            continue
+        # weekday row
+        for j, name in enumerate(DOW):
+            dc = ws.cell(r0 + 1, c0 + j, name)
+            dc.font = Font(bold=True, size=8, color=hx(ACCENT if j == 7 else ("94A3B8" if j >= 5 else MUTED)))
+            dc.alignment = center
+        # day tiles
+        scale = Scale([x["base"] for wk in b["weeks"] for x in wk if x["in_month"] and x["base"] is not None])
+        for k, wk in enumerate(b["weeks"]):
+            rb = r0 + 2 + 5 * k
+            for j, x in enumerate(wk):
+                col = c0 + j
+                known = x["base"] is not None
+                bg = (_soft(scale.color(x["base"]) or "#FFFFFF") if known else "#FFFFFF") if x["in_month"] else "#F8FAFC"
+                ink = hx(INK) if x["in_month"] else "8391A7"
+                spr = x.get("spread") if x["in_month"] else None
+                cells = [ws.cell(rb, col, x["day"]), ws.cell(rb + 1, col, x["base"]),
+                         ws.cell(rb + 2, col, x["peak"]), ws.cell(rb + 3, col, x["mtd"] if x["in_month"] else None),
+                         ws.cell(rb + 4, col, spr)]
+                cells[0].font = Font(size=8, bold=x["in_month"], color="334155" if x["in_month"] else "94A3B8")
+                cells[0].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+                cells[1].number_format, cells[1].font = '"B "0.00', Font(size=10, bold=x["in_month"], color=ink)
+                cells[2].number_format, cells[2].font = '"P "0.00', Font(size=8.5, color=ink)
+                cells[3].number_format, cells[3].font = '"MTD "0.00', Font(size=7.5, color="475569")
+                name = b.get("spread_name", "")
+                cells[4].number_format = f'"{name} "+0.00;"{name} "-0.00;"{name} "0.00'
+                cells[4].font = Font(size=7.5, bold=True, color=hx(SPREAD_INK))
+                side = accent if x.get("target") else white
+                for q, cell in enumerate(cells):
+                    cell.fill = fill(bg)
+                    if q:
+                        cell.alignment = center
+                    edge(cell, left=side if (j or c == 0 or x.get("target")) else sep, right=side)
+                edge(cells[0], top=side)
+                edge(cells[4], bottom=side)
+            # week column
+            xw = c0 + 7
+            for q in range(5):
+                ws.cell(rb + q, xw).fill = fill("#F1F5F9")
+                edge(ws.cell(rb + q, xw), left=white, right=white)
+            edge(ws.cell(rb, xw), top=white)
+            edge(ws.cell(rb + 4, xw), bottom=white)
+            if b["week_base"][k] is not None:
+                if b["week_partial"][k]:
+                    sf = ws.cell(rb, xw, "so far")
+                    sf.font, sf.alignment = Font(size=7, italic=True, color="94A3B8"), center
+                wb_ = ws.cell(rb + 1, xw, b["week_base"][k])
+                wb_.number_format, wb_.font, wb_.alignment = '"B "0.00', Font(size=10, bold=True, color=hx(INK)), center
+                wp = ws.cell(rb + 2, xw, b["week_peak"][k])
+                wp.number_format, wp.font, wp.alignment = '"P "0.00', Font(size=8.5, color=hx(INK)), center
+                ws_ = (b.get("week_spread") or [None] * len(b["weeks"]))[k]
+                if ws_ is not None:
+                    sc = ws.cell(rb + 3, xw, f"{b['spread_name']} {signed(ws_)}")
+                    sc.font, sc.alignment, sc.fill = Font(size=7.5, bold=True, color=hx(SPREAD_INK)), center, fill(SPREAD_BG)
+        # footer
+        rf = r0 + 2 + body
+        parts = f"{b.get('month', '')} MTD   B {fmt(b.get('mtd')) or '-'}   P {fmt(b.get('mtd_p')) or '-'}"
+        if b.get("dod") is not None:
+            parts += f"   ·   MTD vs previous day {signed(b['dod'])}"
+        fc = ws.cell(rf, c0, parts)
+        fc.font, fc.alignment = Font(size=8.5, bold=True, color=hx(INK)), Alignment(horizontal="left", vertical="center", indent=1)
+        for j in range(8):
+            edge(ws.cell(rf, c0 + j), top=line)
+    from openpyxl.worksheet.pagebreak import Break
+    n_rows = math.ceil(len(blocks) / ncols)
+    for r in range(1, n_rows + 1):                            # print one card row (3 cards) per page
+        ws.row_breaks.append(Break(id=top + r * (card_rows + 1) - 1))
+    return n_rows * (card_rows + 1)
+
+
+def _xl_recap(ws, b, r0, c0, body, fill, edge, center, line):
+    """Week recap card: flags (column 1), spread name (column 2), up to 5 weeks + the month (columns 3-8)."""
+    from openpyxl.styles import Alignment, Border, Font, Side
+    cols = b["columns"][-6:]
+    rows = b["rows"]
+    hd = ws.cell(r0 + 1, c0 + 1, "Spread")
+    hd.font, hd.alignment = Font(bold=True, size=8, color=MUTED.lstrip("#")), Alignment(horizontal="left", vertical="center")
+    for j, (l1, l2) in enumerate(cols):
+        last = j == len(cols) - 1
+        hc = ws.cell(r0 + 1, c0 + 2 + j, f"{l1} {l2}")
+        hc.font, hc.alignment = Font(bold=True, size=8, color=(ACCENT if last else INK).lstrip("#")), center
+    scale = Scale([v for r in rows for v in r[1]], mid=0)
+    gap = Side(style="thin", color="FFFFFF")
+    for i, r in enumerate(rows[:body]):
+        rr = r0 + 2 + i
+        name, vals = r[0], r[1][-len(cols):]
+        if len(r) > 2 and r[2]:
+            img = _xl_flag(list(r[2]), 10)
+            _xl_place(ws, img, rr, c0, max(4, 66 - img.width), 4)          # flags right-aligned in column 1
+        nc = ws.cell(rr, c0 + 1, name)
+        nc.font, nc.alignment = Font(bold=True, size=9, color=INK.lstrip("#")), Alignment(horizontal="left", vertical="center")
+        if i % 2 == 0:
+            ws.cell(rr, c0).fill = fill("#F8FAFC")
+            nc.fill = fill("#F8FAFC")
+        for j, v in enumerate(vals):
+            vc = ws.cell(rr, c0 + 2 + j, v)
+            vc.number_format, vc.alignment = "+0.00;-0.00;0.00", center
+            vc.font = Font(size=9, bold=j == len(vals) - 1, color=INK.lstrip("#"))
+            if v is not None:
+                vc.fill = fill(_soft(scale.color(v) or "#FFFFFF", 0.12))
+            vc.border = Border(left=gap, right=gap, top=gap, bottom=gap)
+    rf = r0 + 2 + body
+    fc = ws.cell(rf, c0, b["footer"])
+    fc.font, fc.alignment = Font(size=7.5, color=MUTED.lstrip("#")), Alignment(horizontal="left", vertical="center", indent=1)
+    for j in range(8):
+        edge(ws.cell(rf, c0 + j), top=line)
 
 
 def workbook_bytes(build) -> bytes:

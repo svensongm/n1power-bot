@@ -338,7 +338,8 @@ class Entsoe:
             pieces = None
         if not pieces:
             pieces = self.query(base)
-        pieces = [s for s in pieces or [] if s["meta"].get("contract_MarketAgreement.type", "A01") in ("A01", "")]
+        pieces = [s for s in pieces or [] if s["meta"].get("contract_MarketAgreement.type", "A01") in ("A01", "")
+                  and _seq(s) == 1]          # SDAC only: EXAA's 10:15 auction (DE-LU, AT) is sequence 2
         out, d = {}, d_from
         while d < d_to:
             best = None
@@ -492,6 +493,251 @@ class Volue:
         return out
 
 
+# --------------------------------------------------------------------------- JAO (optional, free token)
+JAO_URL = os.getenv("JAO_API_URL", "https://api.jao.eu/OWSMP")
+JAO_CODES = {"DE_LU": ["DE", "D2", "D4", "D7", "D8", "D1"], "UA_IPS": ["UA"]}
+
+
+def _jao_codes(area: str) -> list[str]:
+    return JAO_CODES.get(area, [label(area)])
+
+
+def _first(d: dict, keys):
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _num(v):
+    try:
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _utc(v):
+    t = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+    return t.replace(tzinfo=UTC) if t.tzinfo is None else t.astimezone(UTC)
+
+
+def _jao_corridor(a: dict):
+    for k in ("corridorCode", "corridor", "corridorName"):
+        v = a.get(k)
+        if isinstance(v, dict):
+            v = v.get("value") or v.get("code") or v.get("name")
+        if isinstance(v, str) and "-" in v:
+            return v
+    parts = str(a.get("identification") or "").split("-")
+    return f"{parts[0]}-{parts[1]}" if len(parts) > 2 else None
+
+
+def _jao_day(a: dict):
+    for k in ("marketPeriodStart", "deliveryPeriodStart", "productPeriodStart", "deliveryStart"):
+        if a.get(k):
+            try:
+                return _utc(a[k]).astimezone(TZ).date()
+            except ValueError:
+                pass
+    m = re.search(r"(\d{2})(\d{2})(\d{2})-\d{2}$", str(a.get("identification") or ""))
+    if m:
+        try:
+            return date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def _jao_slot(r: dict, s0: datetime):
+    """Sort key of one result row: its start time or start hour (None when the row has neither)."""
+    for k, v in r.items():
+        kl = k.lower()
+        if v in (None, "") or not isinstance(v, (str, int, float)):
+            continue
+        if "start" in kl or kl in ("from", "periodfrom"):
+            try:
+                return (_utc(v) - s0).total_seconds() / 60
+            except ValueError:
+                pass
+        if "hour" in kl:
+            m = re.match(r"\s*(\d{1,2})(?::(\d{2}))?", str(v))
+            if m:
+                return int(m.group(1)) * 60 + int(m.group(2) or 0)
+    return None
+
+
+def _jao_hours(a: dict, day: date):
+    """(hourly prices, hourly MW, 'EUR') from one daily auction, or None when not (yet) readable."""
+    res = [r for r in (a.get("results") or []) if isinstance(r, dict)]
+    prods = [p for p in (a.get("products") or []) if isinstance(p, dict)]
+    n, s0 = len(day_hours(day)), day_start(day)
+    rows = []
+    for i, r in enumerate(res):
+        p = prods[i] if len(prods) == len(res) else {}
+        price = _num(_first(r, ("auctionPrice", "clearingPrice", "marginalPrice", "price")))
+        if price is None:
+            price = _num(_first(p, ("auctionPrice", "clearingPrice", "price")))
+        mw = _num(_first(r, ("allocatedCapacity", "allocated")))
+        if mw is None:
+            mw = _num(_first(p, ("allocatedCapacity",)))
+        slot = _jao_slot(r, s0)
+        if slot is None:
+            slot = _jao_slot(p, s0)
+        rows.append((slot, i, price, mw))
+    if not rows:
+        return None
+    if all(x[0] is not None for x in rows):
+        rows.sort(key=lambda x: (x[0], x[1]))
+    if len(rows) == 1:
+        rows = rows * n                                     # one product for the whole day
+    elif len(rows) == 4 * n:                                # quarter-hour products: hourly averages
+        rows = [(None, k, avg(x[2] for x in rows[4 * k:4 * k + 4]), avg(x[3] for x in rows[4 * k:4 * k + 4]))
+                for k in range(n)]
+    if len(rows) != n or any(x[2] is None for x in rows):
+        return None
+    return [x[2] for x in rows], [x[3] for x in rows], "EUR"
+
+
+def _jao_shape(a: dict) -> str:
+    res = a.get("results") or []
+    first = res[0] if res and isinstance(res[0], dict) else {}
+    return (f"{a.get('identification')} · auction fields {sorted(a)[:18]} · {len(res)} results, fields "
+            f"{sorted(first)[:14]} · first result {json.dumps(first, default=str)[:260]}")
+
+
+class Jao:
+    """JAO Market Data API: published results of the daily explicit auctions. JAO allows one request per second."""
+
+    def __init__(self, token: str, http: requests.Session):
+        self.token, self.http = token, http
+        self.gap = float(os.getenv("JAO_MIN_GAP", "1.1"))
+        self._last, self._lock = 0.0, threading.Lock()
+        self.corridors = None
+        self.bulk = None               # True: one request answers for all corridors
+        self.disabled = False
+        self.logged = set()
+
+    def get(self, method: str, params: dict | None = None):
+        with self._lock:
+            wait = self._last + self.gap - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                r = self.http.get(f"{JAO_URL}/{method}", params=params or {},
+                                  headers={"AUTH_API_KEY": self.token}, timeout=90)
+            except requests.RequestException as e:
+                raise SourceError(f"JAO not reachable ({type(e).__name__})")
+            finally:
+                self._last = time.monotonic()
+        if r.status_code in (401, 403):
+            self.disabled = True
+            raise SourceError(f"JAO refused the token (HTTP {r.status_code}) - check the JAO_API_KEY secret")
+        if r.status_code >= 400:
+            raise SourceError(f"JAO HTTP {r.status_code}")
+        try:
+            return r.json()
+        except ValueError:
+            raise SourceError("JAO answer not readable")
+
+    def corridor_list(self) -> list[str]:
+        if self.corridors is None:
+            data = self.get("getcorridors")
+            vals = [(x.get("value") if isinstance(x, dict) else x) for x in (data if isinstance(data, list) else [])]
+            self.corridors = [str(v) for v in vals if v]
+        return self.corridors
+
+    def corridor(self, b):
+        names = {c.upper(): c for c in self.corridor_list()}
+        for x in _jao_codes(b[0]):
+            for y in _jao_codes(b[1]):
+                if f"{x}-{y}" in names:
+                    return names[f"{x}-{y}"]
+        return None
+
+    def _auctions(self, d_from: date, d_to: date, corridors: list[str]) -> list:
+        params = {"horizon": "Daily", "fromdate": (d_from - DAY).isoformat(), "todate": d_to.isoformat()}
+        if self.bulk is not False:
+            try:
+                got = self.get("getauctions", params)
+            except SourceError:
+                if self.disabled:
+                    raise
+                got = None
+            got = got if isinstance(got, list) else []
+            if len({(_jao_corridor(a) or "").upper() for a in got if isinstance(a, dict)}) > 1:
+                self.bulk = True
+                return got
+            self.bulk = False
+        out = []
+        for c in corridors:
+            got = self.get("getauctions", {**params, "corridor": c})
+            out += got if isinstance(got, list) else []
+        return out
+
+    def daily_range(self, d_from: date, d_to: date, borders) -> dict:
+        """{border: {day: (hourly EUR prices, hourly MW, 'EUR')}} for delivery days in [d_from, d_to)."""
+        mapping = {}
+        for b in borders:
+            c = self.corridor(b)
+            if c:
+                mapping.setdefault(c.upper(), (c, []))[1].append(b)
+        if not mapping:
+            return {}
+        out = {}
+        for a in self._auctions(d_from, d_to, [c for c, _ in mapping.values()]):
+            if not isinstance(a, dict) or str(a.get("cancelled")).lower() in ("true", "1"):
+                continue
+            corr = (_jao_corridor(a) or "").upper()
+            day = _jao_day(a)
+            if corr not in mapping or day is None or not (d_from <= day < d_to):
+                continue
+            hours = _jao_hours(a, day)
+            if hours is None:
+                if a.get("results") and any(_first(r, ("auctionPrice",)) is not None for r in a["results"]
+                                            if isinstance(r, dict)) and corr not in self.logged:
+                    self.logged.add(corr)
+                    log.info("JAO: could not read %s - %s", corr, _jao_shape(a))
+                continue
+            for b in mapping[corr][1]:
+                out.setdefault(b, {})[day] = hours
+        return out
+
+
+def test_jao(ctx, d: date) -> int:
+    """'test JAO connection': checks the token and shows how JAO's answer looks (no secrets are printed)."""
+    j = ctx.jao
+    if j is None:
+        print("JAO_API_KEY is not set: add it as a GitHub secret and make sure the workflow file passes it on.")
+        return 1
+    try:
+        cors = j.corridor_list()
+        print(f"JAO token OK - {len(cors)} corridors: {', '.join(cors)}")
+        borders = ctx.cfg["cbc_see"] + ctx.cfg["cbc_ch"]
+        on = {blabel(b): j.corridor(b) for b in borders}
+        print("Borders read from JAO:", ", ".join(f"{k} ({v})" for k, v in on.items() if v) or "none")
+        print("Borders read from ENTSO-E:", ", ".join(k for k, v in on.items() if not v) or "none")
+        sample = next((v for v in on.values() if v), None)
+        if sample:
+            got = j.get("getauctions", {"horizon": "Daily", "corridor": sample,
+                                        "fromdate": (d - DAY).isoformat(), "todate": d.isoformat()})
+            got = got if isinstance(got, list) else []
+            print(f"{sample}: {len(got)} daily auctions found around {d:%d.%m}")
+            for a in got[-2:]:
+                if isinstance(a, dict):
+                    print("  example:", _jao_shape(a), "| delivery day read as", _jao_day(a))
+        data = j.daily_range(d, d + DAY, borders)
+        print(f"Delivery {d:%d.%m.%Y}: {len(data)} borders read from JAO - {', '.join(sorted(blabel(b) for b in data))}")
+        print("One request for all corridors:", "yes" if j.bulk else "no (one request per corridor, 1 per second)")
+        for b in sorted(data, key=blabel)[:2]:
+            p, mw, _ = data[b][d]
+            print(f"  {blabel(b)} hours 1-4: {', '.join(R.fmt(v) for v in p[:4])} EUR/MWh · avg {R.fmt(avg(p))}")
+        return 0
+    except SourceError as e:
+        print(f"JAO: {e}")
+        return 1
+
+
 # --------------------------------------------------------------------------- price store
 class Prices:
     """Hourly day-ahead prices per market and day, from the sources in config order."""
@@ -639,6 +885,21 @@ class Telegram:
                 self._edit(lambda: self.call("editMessageCaption", json={"chat_id": chat, "message_id": row[0],
                                                                          "caption": caption, "parse_mode": "HTML"}))
 
+    def delete_album(self, ids) -> None:
+        """Remove an album the bot posted earlier (it is replaced by a fuller one)."""
+        for c, chat in enumerate(self.chats):
+            row = ids[c] if c < len(ids) else []
+            if not row:
+                continue
+            try:
+                self.call("deleteMessages", json={"chat_id": chat, "message_ids": row})
+            except ReportError:
+                for mid in row:
+                    try:
+                        self.call("deleteMessage", json={"chat_id": chat, "message_id": mid})
+                    except ReportError:
+                        log.warning("Could not delete the earlier CBC album (message %s)", mid)
+
     @staticmethod
     def _reply(reply_to, c):
         if reply_to and c < len(reply_to) and reply_to[c]:
@@ -682,6 +943,9 @@ class DryRun:
         self.n += 1
         return [[self.n * 10 + k for k in range(len(photos))]]
 
+    def delete_album(self, ids):
+        print(f"[album deleted] {ids}")
+
     def edit_album(self, ids, edits, caption):
         for k, (name, png) in edits.items():
             (self.folder / f"{name}.png").write_bytes(png)
@@ -697,8 +961,9 @@ class DryRun:
 
 # --------------------------------------------------------------------------- report pieces
 class Ctx:
-    def __init__(self, cfg, entsoe, volue, out, http):
+    def __init__(self, cfg, entsoe, volue, out, http, jao=None):
         self.cfg, self.entsoe, self.volue, self.out, self.http = cfg, entsoe, volue, out, http
+        self.jao = jao
         self.errors: dict = {}
         self.notes: dict = {}          # border -> why it is missing
         self.prices = Prices(self)
@@ -717,6 +982,19 @@ class Ctx:
 
     def capacity(self, border, d):
         return self.capacity_range(border, d, d + DAY).get(d)
+
+    def jao_range(self, d_from, d_to, borders) -> dict:
+        if not self.jao or self.jao.disabled or not borders:
+            return {}
+        try:
+            return self.jao.daily_range(d_from, d_to, borders)
+        except SourceError as e:
+            self.errors["JAO"] = redact(e)
+            log.info("JAO: %s - using ENTSO-E", redact(e))
+        except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError) as e:
+            self.errors["JAO"] = type(e).__name__
+            log.info("JAO answer not usable (%s) - using ENTSO-E", type(e).__name__)
+        return {}
 
     def why(self, border) -> str:
         return self.errors.get(blabel(border)) or self.notes.get(blabel(border)) or "not on ENTSO-E yet"
@@ -746,19 +1024,26 @@ class CbcJob:
         self.groups = [(g, b) for g, b in self.groups if b]
         self.borders = [b for _, bs in self.groups for b in bs]
         self.data: dict = {}
+        self.source: dict = {}
         self.inactive: set = set()
         self.checked = False
 
     def poll(self):
         todo = [b for b in self.borders if b not in self.data]
+        for b, days in self.ctx.jao_range(self.d, self.d + DAY, todo).items():      # JAO first
+            if self.d in days:
+                self.data[b], self.source[b] = days[self.d], "JAO"
+        todo = [b for b in todo if b not in self.data]
         for b, r in zip(todo, parallel(lambda b: self.ctx.capacity(b, self.d), todo)):
             if r:
-                self.data[b] = r
+                self.data[b], self.source[b] = r, "ENTSO-E"
         if not self.checked:                    # borders without an auction yesterday count as n/a
             self.checked = True
             todo = [b for b in self.borders if b not in self.data]
-            prev = parallel(lambda b: self.ctx.capacity(b, self.d - DAY), todo)
-            self.inactive = {b for b, r in zip(todo, prev) if not r}
+            prev_jao = self.ctx.jao_range(self.d - DAY, self.d, todo)
+            todo2 = [b for b in todo if self.d - DAY not in prev_jao.get(b, {})]
+            prev = parallel(lambda b: self.ctx.capacity(b, self.d - DAY), todo2)
+            self.inactive = {b for b, r in zip(todo2, prev) if not r}
         self.inactive -= set(self.data)
 
     def active(self, borders=None):
@@ -788,7 +1073,10 @@ class CbcJob:
         known = sum(b in self.data for b in borders)
         at = f" at {t:%H:%M}" if t else ""
         banner = f"CBC {group}: {known}/{len(borders)} borders known{at}" + (" · final" if final else "")
-        footer = "Daily explicit capacity auctions, EUR/MWh · ENTSO-E · Peak = hours 9-20"
+        n_jao = sum(self.source.get(b) == "JAO" for b in borders)
+        n_ent = sum(self.source.get(b) == "ENTSO-E" for b in borders)
+        src = " + ".join(x for x in (f"JAO {n_jao}" if n_jao else "", f"ENTSO-E {n_ent}" if n_ent else "") if x)
+        footer = f"Daily explicit capacity auctions, EUR/MWh · source {src or 'JAO / ENTSO-E'} · Peak = hours 9-20"
         if bam:
             footer += f" · {', '.join(bam)} converted from BAM at {BAM_PER_EUR}"
         return _table(self.d, self.ctx.cfg, [blabel(b) for b in borders], cols, states, banner, footer)
@@ -924,7 +1212,7 @@ class PriceJob:
         mtd, prev = run_b.get(d), run_b.get(d - DAY) if d > first else None
         footer = f"{d:%B} MTD  B {R.fmt(mtd) or '-'}  P {R.fmt(run_p.get(d)) or '-'}"
         if mtd is not None and prev is not None:
-            footer += f"   DoD {R.signed(mtd - prev)}"
+            footer += f"   MTD vs previous day {R.signed(mtd - prev)}"
         block = {"title": title, "kind": "price", "weeks": cells, "mtd": mtd, "mtd_p": run_p.get(d),
                  "dod": (mtd - prev) if (mtd is not None and prev is not None) else None,
                  "code": title.split(" ")[0], "month": f"{d:%B}",
@@ -933,6 +1221,9 @@ class PriceJob:
                  "week_partial": [any(x > d or x not in base for x in wk) for wk in weeks], "footer": footer}
         if spread:
             name, ser = spread
+            for wk, days in zip(cells, weeks):
+                for cell, x in zip(wk, days):
+                    cell["spread"] = ser.get(x) if x <= d else None
             srun = self._running(ser, first, min(d, last))
             block.update(spread_name=name, week_spread=[avg(ser.get(x) for x in wk if x <= d) for wk in weeks],
                          spread_mtd=srun.get(d))
@@ -1025,6 +1316,8 @@ def month_workbook(ctx, d: date, t, price_job=None) -> bytes:
         tables.append(j.table(True, None))
     cbc = CbcJob(ctx, d)
     cap = dict(zip(cbc.borders, parallel(lambda b: ctx.capacity_range(b, first, d + DAY), cbc.borders)))
+    for b, days in ctx.jao_range(first, d + DAY, cbc.borders).items():         # JAO first where it has the border
+        cap[b] = {**cap.get(b, {}), **days}
     daily = [(f"{day:%a %d.%m}", [avg(cap[b][day][0]) if day in cap[b] else None for b in cbc.borders], False)
              for day in days]
     daily.append((f"{d:%B} avg", [avg(vals[k] for _, vals, _b in daily) for k in range(len(cbc.borders))], True))
@@ -1039,9 +1332,11 @@ def month_workbook(ctx, d: date, t, price_job=None) -> bytes:
         ws = wb.active
         ws.title = f"Prices {d:%b %Y}"
         ws.cell(1, 1, f"N1 POWER · day-ahead prices · {d:%B %Y} · updated {t:%a %d.%m %H:%M}").font = Font(bold=True, size=14)
-        ws.cell(2, 1, "Calendars: B = base, P = peak 08-20, MTD = month average of base to that day, Week = Mon-Sun. "
-                      "Below: hourly prices, newest day first. EUR/MWh.")
-        row = 4 + R.xl_calendars(ws, 4, blocks, 3) + 1
+        ws.cell(2, 1, "B = base · P = peak 08-20 · MTD = month average of base to that day · Week = Mon-Sun average, "
+                      "blue = spread to HU · framed day = latest delivery day. Below: hourly prices, newest day first. "
+                      "EUR/MWh.").font = Font(size=9, color="64748B")
+        ws.sheet_view.showGridLines = False
+        row = 4 + R.xl_cards(ws, 4, blocks, 3) + 1
         for tb in tables:
             row += R.xl_hourly(ws, row, 1, tb) + 1
         for col in range(1, 30):
@@ -1049,8 +1344,9 @@ def month_workbook(ctx, d: date, t, price_job=None) -> bytes:
         ws2 = wb.create_sheet(f"CBC {d:%b %Y}")
         ws2.cell(1, 1, f"N1 POWER · daily explicit capacity auctions · {d:%B %Y} · updated {t:%a %d.%m %H:%M}").font = \
             Font(bold=True, size=14)
-        ws2.cell(2, 1, "EUR/MWh (BA>RS, RS>BA converted from BAM at 1.95583). Top: daily average per border. "
+        ws2.cell(2, 1, "EUR/MWh (BA-RS, RS-BA converted from BAM at 1.95583). Top: daily average per border. "
                        "Below: hourly prices, newest day first (SEE left, CH right).")
+        ws2.sheet_view.showGridLines = False
         row = 4 + R.xl_matrix(ws2, 4, 1, "Daily average price", "Day", [blabel(b) for b in cbc.borders], daily) + 1
         width_see = len(dict(cbc.groups).get("SEE", [])) + 2
         for pair in cbc_tables:
@@ -1060,6 +1356,13 @@ def month_workbook(ctx, d: date, t, price_job=None) -> bytes:
             row += used + 1
         for col in range(1, 50):
             ws2.column_dimensions[get_column_letter(col)].width = 8.5
+        for sheet in (ws, ws2):                       # print: landscape, all columns on one page width
+            sheet.page_setup.orientation = "landscape"
+            sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
+            sheet.page_setup.fitToWidth, sheet.page_setup.fitToHeight = 1, 0
+            sheet.sheet_properties.pageSetUpPr.fitToPage = True
+            sheet.print_options.horizontalCentered = True
+            sheet.page_margins.left = sheet.page_margins.right = 0.3
     return R.workbook_bytes(build)
 
 
@@ -1169,9 +1472,14 @@ class DayReport:
         return ([blabel(b) for b in self.cbc.borders if b not in self.cbc.data]
                 + [label(m) for m in self.da.markets if m not in self.da.data])
 
-    def caption(self, t, final: bool, snapshot: bool = False) -> str:
+    def caption(self, t, final: bool, snapshot: bool = False, with_prices: bool = True) -> str:
         lines = [f"⚡ <b>Delivery {self.d:%a %d.%m.%Y}</b>"]
-        lines += [f"• {name} {k}/{n}" for name, k, n in self.counts()]
+        counts = self.counts()
+        if not with_prices:
+            counts = [c for c in counts if c[0].startswith("CBC")]
+        lines += [f"• {name} {k}/{n}" for name, k, n in counts]
+        if not with_prices and not final:
+            lines.append(f"• DA prices and calendar follow from ~{self.cfg['first_publish']:%H:%M}")
         if snapshot:
             status = f"snapshot {t:%H:%M} · the automatic post updates itself"
         elif final:
@@ -1218,6 +1526,12 @@ class DayReport:
         return out
 
 
+def fingerprints(rep: DayReport) -> dict:
+    fp = {f"cbc:{blabel(b)}": round(sum(v for v in r[0] if v is not None), 2) for b, r in rep.cbc.data.items()}
+    fp.update({f"da:{label(m)}": round(sum(v for v in h if v is not None), 2) for m, h in rep.da.data.items()})
+    return fp
+
+
 def step(rep: DayReport, st: dict, tg, state: dict) -> None:
     t = now_local()
     rep.poll(t)
@@ -1225,8 +1539,10 @@ def step(rep: DayReport, st: dict, tg, state: dict) -> None:
     final = rep.final(t)
     if not st.get("ids"):
         if cbc_now or da_now:                                       # first data of the day: post the album
-            photos = rep.photos(t)
-            st["ids"] = tg.send_album(photos, rep.caption(t, final))
+            full = bool(da_now)                                     # no price yet: CBC pictures only
+            photos = rep.photos(t, ("cbc", "da") if full else ("cbc",))
+            st["ids"] = tg.send_album(photos, rep.caption(t, final, with_prices=full))
+            st["fp"] = fingerprints(rep)
             st.update(names=[n for n, _ in photos], cbc=cbc_now, da=da_now, posted=f"{t:%H:%M}", final=final)
             log.info("Album posted for %s: %s", rep.d, ", ".join(f"{n} {k}/{m}" for n, k, m in rep.counts()))
             save_state(state, f"{rep.d} posted")
@@ -1236,7 +1552,8 @@ def step(rep: DayReport, st: dict, tg, state: dict) -> None:
             st.update(final=True, excel=True)
             save_state(state, f"{rep.d} nothing published")
     else:
-        old_cbc, old_da = set(st.get("cbc", [])), set(st.get("da", []))
+        old_cbc = {str(x).replace(">", "-") for x in st.get("cbc", [])}
+        old_da = set(st.get("da", []))
         lost = (old_cbc - set(cbc_now)) | (old_da - set(da_now))     # a source hiccup: wait for the next check
         if lost and not final:
             log.info("Not updating yet, these did not answer this time: %s", ", ".join(sorted(lost)))
@@ -1244,20 +1561,45 @@ def step(rep: DayReport, st: dict, tg, state: dict) -> None:
         changed = {k for k, old, now in (("cbc", old_cbc, cbc_now), ("da", old_da, da_now)) if set(now) - old}
         if final and not st.get("final"):
             changed |= {"cbc", "da"}                                  # waiting -> n/a, caption 'final'
-        if changed:
-            caption = rep.caption(t, final)
+        fp_now, fp_old = fingerprints(rep), st.get("fp")
+        corrected = [] if fp_old is None else sorted(k for k, v in fp_now.items()
+                                                     if k in fp_old and abs(fp_old[k] - v) > 0.005)
+        if fp_old is None:                                            # first run of this version: redraw once
+            changed |= {"cbc", "da"}
+        changed |= {k.split(":")[0] for k in corrected}
+        has_prices = any(n.startswith("prices") for n in st.get("names", []))
+        if da_now and not has_prices:
+            # first price result of the day: post the full album and remove the morning CBC-only album
+            old_ids = st["ids"]
+            photos = rep.photos(t)
+            st["ids"] = tg.send_album(photos, rep.caption(t, final))
+            st["names"] = [n for n, _ in photos]
+            st["fp"] = fp_now
+            tg.delete_album(old_ids)
+            note = rep.note(t, old_cbc, old_da)
+            if note:
+                tg.send_text(note, reply_to=st["ids"])
+            st.update(cbc=sorted(old_cbc | set(cbc_now)), da=sorted(old_da | set(da_now)), final=final)
+            log.info("Full album posted for %s (CBC-only album replaced): %s", rep.d,
+                     ", ".join(f"{n} {k}/{m}" for n, k, m in rep.counts()))
+            save_state(state, f"{rep.d} full album")
+        elif changed:
+            caption = rep.caption(t, final, with_prices=has_prices)
             photos = rep.photos(t, changed)
             edits = {st["names"].index(n): (n, png) for n, png in photos if n in st.get("names", [])}
             try:
                 tg.edit_album(st["ids"], edits, caption)
             except AlbumGone:
-                photos = rep.photos(t)
+                photos = rep.photos(t, ("cbc", "da") if has_prices else ("cbc",))
                 st["ids"] = tg.send_album(photos, caption)
                 st["names"] = [n for n, _ in photos]
             note = rep.note(t, old_cbc, old_da)
+            if corrected:
+                fix = ", ".join(k.split(":", 1)[1] + (" price" if k.startswith("da:") else "") for k in corrected)
+                note = (note or f"🔄 <b>Updated {t:%H:%M}</b> · delivery {rep.d:%a %d.%m}") + f"\n• Corrected: {fix}"
             if note:
                 tg.send_text(note, reply_to=st["ids"])
-            st.update(cbc=sorted(old_cbc | set(cbc_now)), da=sorted(old_da | set(da_now)), final=final)
+            st.update(cbc=sorted(old_cbc | set(cbc_now)), da=sorted(old_da | set(da_now)), final=final, fp=fp_now)
             log.info("Album updated for %s: %s", rep.d, ", ".join(f"{n} {k}/{m}" for n, k, m in rep.counts()))
             save_state(state, f"{rep.d} updated {t:%H:%M}")
     if st.get("final") and not st.get("excel"):
@@ -1322,7 +1664,9 @@ def send_now(ctx, tg, d: date) -> None:
     if not cbc_now and not da_now:
         tg.send_text(escape(f"Delivery {d:%a %d.%m.%Y}: nothing published yet."))
         return
-    ids = tg.send_album(rep.photos(t), rep.caption(t, False, snapshot=True))
+    full = bool(da_now)
+    ids = tg.send_album(rep.photos(t, ("cbc", "da") if full else ("cbc",)),
+                        rep.caption(t, False, snapshot=True, with_prices=full))
     if ctx.cfg["excel"]:
         tg.send_file(f"N1POWER_{d:%Y-%m}.xlsx", month_workbook(ctx, d, t, rep.da),
                      f"📊 <b>{d:%B %Y}</b> · prices and CBC up to {d:%a %d.%m}", reply_to=ids, silent=True)
@@ -1394,6 +1738,7 @@ def _price_times(cfg: dict, pr: dict) -> dict:
     shift = lambda tt: (datetime.combine(date(2000, 1, 1), tt) - early).time()
     cfg["price_check_from"] = {norm(k): shift(_hhmm(v)) for k, v in pub.items()}
     cfg["price_check_from_default"] = shift(default)
+    cfg["first_publish"] = min([_hhmm(v) for v in pub.values()] + [default])
     parts = [f"{label(norm(k))} {v}" for k, v in sorted(pub.items(), key=lambda kv: kv[1])]
     cfg["publish_text"] = ", ".join(parts + [f"others {default:%H:%M}"])
     return cfg
@@ -1407,6 +1752,7 @@ def main(argv=None) -> int:
     ap.add_argument("--date", help="delivery day YYYY-MM-DD for --now (default tomorrow)")
     ap.add_argument("--dry-run", action="store_true", help="write pictures and Excel to ./preview instead of sending")
     ap.add_argument("--find-chat-id", action="store_true")
+    ap.add_argument("--test-jao", action="store_true", help="check the JAO token and show how JAO's answer looks")
     ap.add_argument("--config", default=str(HERE / "config.toml"))
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
@@ -1428,7 +1774,10 @@ def main(argv=None) -> int:
         if not dry and (not token or not chats):
             raise ReportError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")
         volue = Volue(vid, vsecret, http, cfg["volue_curves"]) if vid and vsecret else None
-        ctx = Ctx(cfg, Entsoe(entsoe_key, http), volue, tg, http)
+        jao_key = env("JAO_API_KEY", secret=True)
+        ctx = Ctx(cfg, Entsoe(entsoe_key, http), volue, tg, http, Jao(jao_key, http) if jao_key else None)
+        if a.test_jao:
+            return test_jao(ctx, date.fromisoformat(a.date or env("DELIVERY_DATE") or now_local().date().isoformat()))
         if a.watch:
             watch(ctx, tg, cfg["run_minutes"] or a.run_minutes)
         else:
