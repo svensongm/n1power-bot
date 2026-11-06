@@ -78,5 +78,30 @@
    "prices_calendar_2"
   ],
   "posted": "15:56"
+ },
+ "2026-11-07": {
+  "cbc": [
+   "BA-RS",
+   "RS-BA"
+  ],
+  "da": [],
+  "final": false,
+  "ids": [
+   [
+    29,
+    30,
+    31,
+    32,
+    33
+   ]
+  ],
+  "names": [
+   "cbc_see",
+   "cbc_ch",
+   "prices_table",
+   "prices_calendar_1",
+   "prices_calendar_2"
+  ],
+  "posted": "09:34"
  }
 }
