@@ -242,6 +242,7 @@
   "cbc": [
    "AT-CH",
    "BA-RS",
+   "BG-RS",
    "CH-AT",
    "CH-DE",
    "DE-CH",
@@ -250,6 +251,7 @@
    "ME-RS",
    "MK-RS",
    "RS-BA",
+   "RS-BG",
    "RS-HR",
    "RS-HU",
    "RS-ME",
@@ -260,6 +262,7 @@
   "fp": {
    "cbc:AT-CH": 14.46,
    "cbc:BA-RS": 22.91,
+   "cbc:BG-RS": 83.02,
    "cbc:CH-AT": 20.63,
    "cbc:CH-DE": 3.83,
    "cbc:DE-CH": 44.09,
@@ -268,6 +271,7 @@
    "cbc:ME-RS": 28.57,
    "cbc:MK-RS": 33.17,
    "cbc:RS-BA": 1.15,
+   "cbc:RS-BG": 0.21,
    "cbc:RS-HR": 3.52,
    "cbc:RS-HU": 0.61,
    "cbc:RS-ME": 31.61,
