@@ -241,6 +241,8 @@
  "2026-11-08": {
   "cbc": [
    "BA-RS",
+   "HR-RS",
+   "HU-RS",
    "ME-RS",
    "MK-RS",
    "RS-BA",
@@ -251,6 +253,8 @@
   "final": false,
   "fp": {
    "cbc:BA-RS": 22.91,
+   "cbc:HR-RS": 22.81,
+   "cbc:HU-RS": 62.81,
    "cbc:ME-RS": 28.57,
    "cbc:MK-RS": 33.17,
    "cbc:RS-BA": 1.15,
