@@ -242,6 +242,7 @@
   "cbc": [
    "AT-CH",
    "BA-RS",
+   "CH-AT",
    "CH-DE",
    "DE-CH",
    "HR-RS",
@@ -259,6 +260,7 @@
   "fp": {
    "cbc:AT-CH": 14.46,
    "cbc:BA-RS": 22.91,
+   "cbc:CH-AT": 20.63,
    "cbc:CH-DE": 3.83,
    "cbc:DE-CH": 44.09,
    "cbc:HR-RS": 22.81,
