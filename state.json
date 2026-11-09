@@ -555,5 +555,56 @@
    "prices_calendar_2"
   ],
   "posted": "09:30"
+ },
+ "2026-11-10": {
+  "cbc": [
+   "AT-CH",
+   "BA-RS",
+   "BG-RS",
+   "CH-AT",
+   "CH-DE",
+   "DE-CH",
+   "HR-RS",
+   "HU-RS",
+   "ME-RS",
+   "MK-RS",
+   "RS-BA",
+   "RS-BG",
+   "RS-HR",
+   "RS-HU",
+   "RS-ME",
+   "RS-MK"
+  ],
+  "da": [],
+  "final": false,
+  "fp": {
+   "cbc:AT-CH": 1.41,
+   "cbc:BA-RS": 78.7,
+   "cbc:BG-RS": 76.69,
+   "cbc:CH-AT": 738.48,
+   "cbc:CH-DE": 208.88,
+   "cbc:DE-CH": 16.46,
+   "cbc:HR-RS": 85.36,
+   "cbc:HU-RS": 353.88,
+   "cbc:ME-RS": 236.32,
+   "cbc:MK-RS": 105.42,
+   "cbc:RS-BA": 0.0,
+   "cbc:RS-BG": 7.18,
+   "cbc:RS-HR": 0.36,
+   "cbc:RS-HU": 135.61,
+   "cbc:RS-ME": 2.84,
+   "cbc:RS-MK": 19.92
+  },
+  "ids": [
+   [
+    124,
+    125
+   ]
+  ],
+  "names": [
+   "cbc_see",
+   "cbc_ch"
+  ],
+  "posted": "09:42"
  }
 }
