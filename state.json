@@ -558,6 +558,8 @@
  },
  "2026-11-10": {
   "cbc": [
+   "AL-GR",
+   "AL-ME",
    "AT-CH",
    "BA-RS",
    "BG-MK",
@@ -581,11 +583,14 @@
    "RS-HR",
    "RS-HU",
    "RS-ME",
-   "RS-MK"
+   "RS-MK",
+   "TR-GR"
   ],
   "da": [],
   "final": false,
   "fp": {
+   "cbc:AL-GR": 0.0,
+   "cbc:AL-ME": 57.58,
    "cbc:AT-CH": 1.41,
    "cbc:BA-RS": 78.7,
    "cbc:BG-MK": 176.4,
@@ -609,7 +614,8 @@
    "cbc:RS-HR": 0.36,
    "cbc:RS-HU": 135.61,
    "cbc:RS-ME": 2.84,
-   "cbc:RS-MK": 19.92
+   "cbc:RS-MK": 19.92,
+   "cbc:TR-GR": 5478.06
   },
   "ids": [
    [
