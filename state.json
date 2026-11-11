@@ -942,7 +942,7 @@
    "SI",
    "SK"
   ],
-  "final": false,
+  "final": true,
   "fp": {
    "cbc:AL-GR": 0.0,
    "cbc:AL-ME": 29.4,
