@@ -886,6 +886,7 @@
    "CH-AT",
    "CH-DE",
    "CH-FR",
+   "CH-IT",
    "DE-CH",
    "FR-CH",
    "GR-AL",
@@ -894,6 +895,7 @@
    "HR-BA",
    "HR-RS",
    "HU-RS",
+   "IT-CH",
    "IT-ME",
    "ME-AL",
    "ME-BA",
@@ -915,7 +917,9 @@
    "XK-ME",
    "XK-MK"
   ],
-  "da": [],
+  "da": [
+   "ME"
+  ],
   "final": false,
   "fp": {
    "cbc:AL-GR": 0.0,
@@ -928,6 +932,7 @@
    "cbc:CH-AT": 785.5,
    "cbc:CH-DE": 2.71,
    "cbc:CH-FR": 1.75,
+   "cbc:CH-IT": 23.0,
    "cbc:DE-CH": 1406.42,
    "cbc:FR-CH": 1499.88,
    "cbc:GR-AL": 1204.89,
@@ -936,6 +941,7 @@
    "cbc:HR-BA": 0.0,
    "cbc:HR-RS": 200.48,
    "cbc:HU-RS": 4.1,
+   "cbc:IT-CH": 44.64,
    "cbc:IT-ME": 964.47,
    "cbc:ME-AL": 110.22,
    "cbc:ME-BA": 29.9,
@@ -955,17 +961,24 @@
    "cbc:RS-RO": 5.93,
    "cbc:TR-GR": 4301.83,
    "cbc:XK-ME": 3.68,
-   "cbc:XK-MK": 0.0
+   "cbc:XK-MK": 0.0,
+   "da:ME": 7179.83
   },
   "ids": [
    [
-    180,
-    181
+    191,
+    192,
+    193,
+    194,
+    195
    ]
   ],
   "names": [
    "cbc_see",
-   "cbc_ch"
+   "cbc_ch",
+   "prices_table",
+   "prices_calendar_1",
+   "prices_calendar_2"
   ],
   "posted": "09:30"
  }
