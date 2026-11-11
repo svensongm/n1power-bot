@@ -877,6 +877,7 @@
  "2026-11-12": {
   "cbc": [
    "AT-CH",
+   "BG-MK",
    "BG-RS",
    "CH-AT",
    "CH-DE",
@@ -895,6 +896,7 @@
   "final": false,
   "fp": {
    "cbc:AT-CH": 2.59,
+   "cbc:BG-MK": 21.02,
    "cbc:BG-RS": 41.79,
    "cbc:CH-AT": 785.5,
    "cbc:CH-DE": 2.71,
