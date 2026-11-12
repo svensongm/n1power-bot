@@ -1029,7 +1029,12 @@
  },
  "2026-11-13": {
   "cbc": [
+   "AT-CH",
    "BA-RS",
+   "CH-AT",
+   "CH-DE",
+   "HR-RS",
+   "HU-RS",
    "ME-RS",
    "MK-RS",
    "RS-BA",
@@ -1041,7 +1046,12 @@
   "da": [],
   "final": false,
   "fp": {
+   "cbc:AT-CH": 69.42,
    "cbc:BA-RS": 11.37,
+   "cbc:CH-AT": 5.84,
+   "cbc:CH-DE": 0.0,
+   "cbc:HR-RS": 45.4,
+   "cbc:HU-RS": 10.73,
    "cbc:ME-RS": 57.58,
    "cbc:MK-RS": 67.26,
    "cbc:RS-BA": 0.46,
