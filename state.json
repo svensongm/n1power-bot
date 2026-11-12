@@ -1030,6 +1030,7 @@
  "2026-11-13": {
   "cbc": [
    "AT-CH",
+   "BA-HR",
    "BA-RS",
    "BG-MK",
    "BG-RS",
@@ -1038,8 +1039,13 @@
    "CH-FR",
    "DE-CH",
    "FR-CH",
+   "GR-AL",
+   "GR-TR",
+   "HR-BA",
    "HR-RS",
    "HU-RS",
+   "ME-AL",
+   "ME-BA",
    "ME-RS",
    "MK-BG",
    "MK-RS",
@@ -1048,12 +1054,14 @@
    "RS-HR",
    "RS-HU",
    "RS-ME",
-   "RS-MK"
+   "RS-MK",
+   "XK-ME"
   ],
   "da": [],
   "final": false,
   "fp": {
    "cbc:AT-CH": 69.42,
+   "cbc:BA-HR": 3.83,
    "cbc:BA-RS": 11.37,
    "cbc:BG-MK": 91.88,
    "cbc:BG-RS": 85.47,
@@ -1062,8 +1070,13 @@
    "cbc:CH-FR": 6.48,
    "cbc:DE-CH": 1935.25,
    "cbc:FR-CH": 1139.48,
+   "cbc:GR-AL": 1772.68,
+   "cbc:GR-TR": 31.77,
+   "cbc:HR-BA": 0.06,
    "cbc:HR-RS": 45.4,
    "cbc:HU-RS": 10.73,
+   "cbc:ME-AL": 35.95,
+   "cbc:ME-BA": 2.29,
    "cbc:ME-RS": 57.58,
    "cbc:MK-BG": 68.96,
    "cbc:MK-RS": 67.26,
@@ -1072,7 +1085,8 @@
    "cbc:RS-HR": 15.77,
    "cbc:RS-HU": 41.04,
    "cbc:RS-ME": 11.31,
-   "cbc:RS-MK": 2.6
+   "cbc:RS-MK": 2.6,
+   "cbc:XK-ME": 5.93
   },
   "ids": [
    [
