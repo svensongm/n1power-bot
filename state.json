@@ -1026,5 +1026,36 @@
    "prices_calendar_2"
   ],
   "posted": "09:30"
+ },
+ "2026-11-13": {
+  "cbc": [
+   "BA-RS",
+   "ME-RS",
+   "MK-RS",
+   "RS-BA",
+   "RS-ME",
+   "RS-MK"
+  ],
+  "da": [],
+  "final": false,
+  "fp": {
+   "cbc:BA-RS": 11.37,
+   "cbc:ME-RS": 57.58,
+   "cbc:MK-RS": 67.26,
+   "cbc:RS-BA": 0.46,
+   "cbc:RS-ME": 11.31,
+   "cbc:RS-MK": 2.6
+  },
+  "ids": [
+   [
+    210,
+    211
+   ]
+  ],
+  "names": [
+   "cbc_see",
+   "cbc_ch"
+  ],
+  "posted": "09:32"
  }
 }
