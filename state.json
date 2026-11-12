@@ -1033,6 +1033,8 @@
    "ME-RS",
    "MK-RS",
    "RS-BA",
+   "RS-HR",
+   "RS-HU",
    "RS-ME",
    "RS-MK"
   ],
@@ -1043,6 +1045,8 @@
    "cbc:ME-RS": 57.58,
    "cbc:MK-RS": 67.26,
    "cbc:RS-BA": 0.46,
+   "cbc:RS-HR": 15.77,
+   "cbc:RS-HU": 41.04,
    "cbc:RS-ME": 11.31,
    "cbc:RS-MK": 2.6
   },
