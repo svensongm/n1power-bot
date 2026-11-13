@@ -1185,5 +1185,28 @@
    "prices_calendar_2"
   ],
   "posted": "09:32"
+ },
+ "2026-11-14": {
+  "cbc": [
+   "ME-RS",
+   "RS-ME"
+  ],
+  "da": [],
+  "final": false,
+  "fp": {
+   "cbc:ME-RS": 12.44,
+   "cbc:RS-ME": 38.45
+  },
+  "ids": [
+   [
+    239,
+    240
+   ]
+  ],
+  "names": [
+   "cbc_see",
+   "cbc_ch"
+  ],
+  "posted": "09:30"
  }
 }
