@@ -1188,14 +1188,22 @@
  },
  "2026-11-14": {
   "cbc": [
+   "BA-RS",
    "ME-RS",
-   "RS-ME"
+   "MK-RS",
+   "RS-BA",
+   "RS-ME",
+   "RS-MK"
   ],
   "da": [],
   "final": false,
   "fp": {
+   "cbc:BA-RS": 3.99,
    "cbc:ME-RS": 12.44,
-   "cbc:RS-ME": 38.45
+   "cbc:MK-RS": 10.23,
+   "cbc:RS-BA": 0.0,
+   "cbc:RS-ME": 38.45,
+   "cbc:RS-MK": 1.01
   },
   "ids": [
    [
