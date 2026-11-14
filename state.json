@@ -1391,7 +1391,8 @@
    "XK-MK"
   ],
   "da": [
-   "ME"
+   "ME",
+   "MK"
   ],
   "final": false,
   "fp": {
@@ -1437,7 +1438,8 @@
    "cbc:TR-GR": 2305.8,
    "cbc:XK-ME": 41.71,
    "cbc:XK-MK": 0.0,
-   "da:ME": 4308.62
+   "da:ME": 4308.62,
+   "da:MK": 0.0
   },
   "ids": [
    [
