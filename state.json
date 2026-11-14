@@ -1356,8 +1356,10 @@
    "CH-FR",
    "DE-CH",
    "FR-CH",
+   "HR-BA",
    "HR-RS",
    "HU-RS",
+   "ME-BA",
    "ME-RS",
    "MK-BG",
    "MK-RS",
@@ -1366,7 +1368,8 @@
    "RS-HR",
    "RS-HU",
    "RS-ME",
-   "RS-MK"
+   "RS-MK",
+   "XK-ME"
   ],
   "da": [],
   "final": false,
@@ -1380,8 +1383,10 @@
    "cbc:CH-FR": 0.24,
    "cbc:DE-CH": 2345.5,
    "cbc:FR-CH": 3082.88,
+   "cbc:HR-BA": 28.61,
    "cbc:HR-RS": 33.89,
    "cbc:HU-RS": 45.77,
+   "cbc:ME-BA": 0.58,
    "cbc:ME-RS": 9.17,
    "cbc:MK-BG": 22.8,
    "cbc:MK-RS": 2.96,
@@ -1390,7 +1395,8 @@
    "cbc:RS-HR": 0.24,
    "cbc:RS-HU": 0.06,
    "cbc:RS-ME": 199.95,
-   "cbc:RS-MK": 4.68
+   "cbc:RS-MK": 4.68,
+   "cbc:XK-ME": 41.71
   },
   "ids": [
    [
