@@ -1348,13 +1348,17 @@
  "2026-11-15": {
   "cbc": [
    "ME-RS",
-   "RS-ME"
+   "MK-RS",
+   "RS-ME",
+   "RS-MK"
   ],
   "da": [],
   "final": false,
   "fp": {
    "cbc:ME-RS": 9.17,
-   "cbc:RS-ME": 199.95
+   "cbc:MK-RS": 2.96,
+   "cbc:RS-ME": 199.95,
+   "cbc:RS-MK": 4.68
   },
   "ids": [
    [
