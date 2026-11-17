@@ -1428,6 +1428,7 @@
    "SI",
    "SK"
   ],
+  "excel": true,
   "final": true,
   "fp": {
    "cbc:AL-GR": 0.05,
