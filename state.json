@@ -1359,20 +1359,32 @@
  },
  "2026-11-19": {
   "cbc": [
+   "AT-CH",
    "BA-RS",
+   "DE-CH",
+   "HR-RS",
+   "HU-RS",
    "ME-RS",
    "MK-RS",
    "RS-BA",
+   "RS-HR",
+   "RS-HU",
    "RS-ME",
    "RS-MK"
   ],
   "da": [],
   "final": false,
   "fp": {
+   "cbc:AT-CH": 9.56,
    "cbc:BA-RS": 8.05,
+   "cbc:DE-CH": 161.64,
+   "cbc:HR-RS": 20.84,
+   "cbc:HU-RS": 14.74,
    "cbc:ME-RS": 260.53,
    "cbc:MK-RS": 430.44,
    "cbc:RS-BA": 6.83,
+   "cbc:RS-HR": 76.6,
+   "cbc:RS-HU": 181.59,
    "cbc:RS-ME": 62.83,
    "cbc:RS-MK": 5.22
   },
