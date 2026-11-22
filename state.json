@@ -1408,7 +1408,9 @@
    "XK-ME",
    "XK-MK"
   ],
-  "da": [],
+  "da": [
+   "ME"
+  ],
   "final": false,
   "fp": {
    "cbc:AL-GR": 0.0,
@@ -1452,17 +1454,24 @@
    "cbc:RS-RO": 1.65,
    "cbc:TR-GR": 1933.03,
    "cbc:XK-ME": 121.48,
-   "cbc:XK-MK": 9.15
+   "cbc:XK-MK": 9.15,
+   "da:ME": 3244.09
   },
   "ids": [
    [
-    501,
-    502
+    512,
+    513,
+    514,
+    515,
+    516
    ]
   ],
   "names": [
    "cbc_see",
-   "cbc_ch"
+   "cbc_ch",
+   "prices_table",
+   "prices_calendar_1",
+   "prices_calendar_2"
   ],
   "posted": "09:30"
  }
