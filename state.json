@@ -1434,7 +1434,7 @@
    "SI",
    "SK"
   ],
-  "final": false,
+  "final": true,
   "fp": {
    "cbc:AL-GR": 96.51,
    "cbc:AL-ME": 347.66,
