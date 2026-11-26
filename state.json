@@ -1,96 +1,4 @@
 {
- "2026-11-17": {
-  "cbc": [
-   "AL-GR",
-   "AL-ME",
-   "AT-CH",
-   "BA-HR",
-   "BA-ME",
-   "BA-RS",
-   "BG-MK",
-   "BG-RS",
-   "CH-AT",
-   "CH-DE",
-   "CH-FR",
-   "CH-IT",
-   "DE-CH",
-   "FR-CH",
-   "GR-AL",
-   "GR-MK",
-   "GR-TR",
-   "HR-BA",
-   "HR-RS",
-   "HU-RS",
-   "IT-CH",
-   "IT-ME",
-   "ME-AL",
-   "ME-BA",
-   "ME-IT",
-   "ME-RS",
-   "ME-XK",
-   "MK-BG",
-   "MK-GR",
-   "MK-RS",
-   "MK-XK",
-   "RO-RS",
-   "RS-BA",
-   "RS-BG",
-   "RS-HR",
-   "RS-HU",
-   "RS-ME",
-   "RS-MK",
-   "RS-RO",
-   "TR-GR",
-   "XK-ME",
-   "XK-MK"
-  ],
-  "da": [
-   "AL",
-   "AT",
-   "BE",
-   "BG",
-   "CH",
-   "CZ",
-   "DE",
-   "ES",
-   "FR",
-   "GR",
-   "HR",
-   "HU",
-   "IT",
-   "IT-CSUD",
-   "IT-NORD",
-   "IT-SUD",
-   "ME",
-   "MK",
-   "NL",
-   "PL",
-   "RO",
-   "RS",
-   "SI",
-   "SK"
-  ],
-  "excel": true,
-  "final": true,
-  "fp": {},
-  "ids": [
-   [
-    345,
-    346,
-    347,
-    348,
-    349
-   ]
-  ],
-  "names": [
-   "cbc_see",
-   "cbc_ch",
-   "prices_table",
-   "prices_calendar_1",
-   "prices_calendar_2"
-  ],
-  "posted": "09:41"
- },
  "2026-11-18": {
   "cbc": [
    "AL-GR",
@@ -1521,5 +1429,56 @@
    "prices_calendar_2"
   ],
   "posted": "09:44"
+ },
+ "2026-11-27": {
+  "cbc": [
+   "AT-CH",
+   "BA-RS",
+   "BG-RS",
+   "CH-AT",
+   "CH-DE",
+   "DE-CH",
+   "HR-RS",
+   "HU-RS",
+   "ME-RS",
+   "MK-RS",
+   "RS-BA",
+   "RS-BG",
+   "RS-HR",
+   "RS-HU",
+   "RS-ME",
+   "RS-MK"
+  ],
+  "da": [],
+  "final": false,
+  "fp": {
+   "cbc:AT-CH": 5.71,
+   "cbc:BA-RS": 235.27,
+   "cbc:BG-RS": 41.02,
+   "cbc:CH-AT": 136.56,
+   "cbc:CH-DE": 102.57,
+   "cbc:DE-CH": 23.19,
+   "cbc:HR-RS": 8.01,
+   "cbc:HU-RS": 5.16,
+   "cbc:ME-RS": 621.17,
+   "cbc:MK-RS": 86.06,
+   "cbc:RS-BA": 0.03,
+   "cbc:RS-BG": 0.36,
+   "cbc:RS-HR": 51.64,
+   "cbc:RS-HU": 327.06,
+   "cbc:RS-ME": 3.78,
+   "cbc:RS-MK": 3.47
+  },
+  "ids": [
+   [
+    605,
+    606
+   ]
+  ],
+  "names": [
+   "cbc_see",
+   "cbc_ch"
+  ],
+  "posted": "09:41"
  }
 }
